@@ -669,6 +669,7 @@ checksum = "f8a9aa791c7b5a71b636b7a68207fdebf171ddfc593d9c8506ec4cbc527b6a84"
 dependencies = [
  "implicit-clone-derive",
  "indexmap",
+ "serde",
 ]
 
 [[package]]
@@ -689,6 +690,7 @@ checksum = "168fb715dda47215e360912c096649d23d58bf392ac62f73919e831745e40f26"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
 ]
 
 [[package]]
@@ -764,6 +766,7 @@ version = "0.1.0"
 dependencies = [
  "gloo-console 0.3.0",
  "gloo-file 0.3.0",
+ "implicit-clone",
  "js-sys",
  "rexie",
  "serde",

@@ -120,3 +120,17 @@ input#file-upload {
     cursor: pointer;
 }
 
+.flexbox {
+    display: flex;
+}
+
+
+#VolumeCover {
+    margin: 10px;
+
+    img {
+        height: 364px;
+        width: 257px;
+        object-fit: contain;
+    }
+}

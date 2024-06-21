@@ -1,17 +1,31 @@
 use serde::{Deserialize, Serialize};
+use yew::AttrValue;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct VolumeMetadata {
     #[serde(skip_serializing)]
     pub id: Option<u32>,
-    pub version: String,
-    pub created_at: String,
-    pub modified_at: String,
-    pub title: String,
-    pub volume: String,
-    pub volume_uuid: String,
+    pub version: AttrValue,
+    pub created_at: AttrValue,
+    pub modified_at: AttrValue,
+    pub title: AttrValue,
+    pub volume: AttrValue,
+    pub volume_uuid: AttrValue,
     // Pages is an array of (page_name, ocr_name) pairs.
-    pub pages: Box<[(String, String)]>,
+    pub pages: Box<[(AttrValue, AttrValue)]>,
+
+    cover: Option<AttrValue>,
+}
+
+impl<'a> VolumeMetadata {
+    /// Convenience method for getting the name of cover art,
+    /// whether `self.cover` is set or not.
+    pub fn cover(&'a self) -> &'a AttrValue {
+        if let Some(page) = self.cover.as_ref() {
+            return page;
+        }
+        &self.pages[0].0
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -31,6 +45,7 @@ pub struct OcrBlock {
     // lines_coords: Vec<Vec<(f32, f32)>>,
 }
 
+#[derive(Clone)]
 pub struct PageImage {
     inner: gloo_file::File,
 }
@@ -73,5 +88,3 @@ impl From<PageImage> for gloo_file::ObjectUrl {
         page_image.inner.into()
     }
 }
-
-

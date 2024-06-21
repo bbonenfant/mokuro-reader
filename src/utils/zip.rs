@@ -26,16 +26,17 @@ pub async fn extract_ziparchive(
         put_volume(&db, &mut volume).await?;
         volume
     };
-
+    
+    let cover = volume.cover();
     let cover_object_url = {
-        let cover_data = read_zipfile(&mut archive, "cover.avif")?;
-        PageImage::new("cover.avif", &cover_data[..]).into()
+        let cover_data = read_zipfile(&mut archive, cover)?;
+        PageImage::new(cover, &cover_data[..]).into()
     };
 
     let id = volume.id.unwrap().into();
     let (txn, pages_store, ocr_store) = start_bulk_write_txn(&db)?;
     for (page_name, ocr_name) in volume.pages.iter() {
-        let key = js_sys::Array::of2(&id, &page_name.into());
+        let key = js_sys::Array::of2(&id, &page_name.as_str().into());
         let image_data = {
             let image_data = read_zipfile(&mut archive, page_name)?;
             PageImage::new(page_name, &image_data[..])
@@ -73,7 +74,7 @@ pub async fn create_ziparchive(
 
     let id = volume.id.unwrap().into();
     for (page_name, ocr_name) in volume.pages.iter() {
-        let key = js_sys::Array::of2(&id, &page_name.into());
+        let key = js_sys::Array::of2(&id, &page_name.as_str().into());
         let (image, ocr) = get_page_and_ocr(&db, &key).await?;
 
         let image_data = gloo_file_read(image.as_ref()).await

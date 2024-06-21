@@ -6,7 +6,7 @@ use yew::{Callback, function_component, html, Html, HtmlResult, TargetCast, use_
 use yew::suspense::{Suspense, use_future_with};
 use yew_autoprops::autoprops;
 
-use crate::utils::timestamp as new_timestamp;
+use crate::utils::timestamp;
 use crate::utils::web::{ask_to_persist_storage, is_web_storage_persisted};
 use crate::utils::zip::{create_ziparchive, extract_ziparchive};
 
@@ -18,13 +18,13 @@ use crate::utils::zip::{create_ziparchive, extract_ziparchive};
 pub fn upload_modal(
     db: &Rc<Rexie>,
     close_modal: &Callback<MouseEvent>,
-    timestamp: u64,
+    rerender: u64,
 ) -> HtmlResult {
     // `persist` asks the browser whether the user has enabled persisted storage.
-    let future = use_future_with(timestamp, |_| is_web_storage_persisted())?;
+    let future = use_future_with(rerender, |_| is_web_storage_persisted())?;
     let persisted = future.as_ref();
 
-    gloo_console::debug!(format!("storage persisted: {} {:?}", timestamp, persisted));
+    gloo_console::debug!(format!("storage persisted: {} {:?}", rerender, persisted));
 
     let persist_storage = Callback::from(|_: MouseEvent| {
         wasm_bindgen_futures::spawn_local(async {
@@ -70,7 +70,7 @@ pub fn upload_modal(
                 <input id="file-upload" type="file" accept="application/zip" multiple={true} {onchange}/>
                 if let Some(file) = file_names.first() {
                     <Suspense fallback={html! {<div>{"Processing..."}</div>}}>
-                        <Preview {db} file_obj={file.clone()} timestamp={new_timestamp()}/>
+                        <Preview {db} file_obj={file.clone()} rerender={timestamp()}/>
                     </Suspense>
                 }
             </div>
@@ -80,8 +80,8 @@ pub fn upload_modal(
 
 #[autoprops]
 #[function_component(Preview)]
-fn preview(db: &Rc<Rexie>, file_obj: &gloo_file::File, timestamp: u64) -> HtmlResult {
-    let future = use_future_with(timestamp, |_| {
+fn preview(db: &Rc<Rexie>, file_obj: &gloo_file::File, rerender: u64) -> HtmlResult {
+    let future = use_future_with(rerender, |_| {
         extract_ziparchive(db.clone(), file_obj.clone())
     })?;
     let (volume, cover_object_url) = future.as_ref().unwrap();

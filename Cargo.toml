@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 gloo-console = "0.3"
 gloo-file = { version = "0.3", features = ["futures"] }
+implicit-clone = { version = "0.4.9", features = ["serde"] }
 js-sys = "0.3"
 rexie = "0.5.0"
 serde = { version = "1.0", features = ["rc"] }
