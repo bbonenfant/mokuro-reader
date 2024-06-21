@@ -32,3 +32,4 @@ zip = { version = "2.1.3", default-features = false, features = [
 ] }
 wasm-bindgen-futures = "0.4.42"
 wasm-timer = "0.2.5"
+yew-router = "0.18.0"
