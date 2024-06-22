@@ -148,18 +148,19 @@ input#file-upload {
 }
 
 #Reader {
-    position: relative;
+    height: 100vh;
+    padding: 10px;
+
+    display: flex;
+    flex-flow: nowrap;
+    align-items: center;
     justify-content: center;
-    padding-inline: 10px;
-    top: 50%;
-    transform: translateY(-50%);
 }
 
 
 .reader-image {
-    max-height: 100vh;
+    max-height: 100%;
     max-width: 50%;
-    padding-block: 10px;
 }
 
 .magnifier {

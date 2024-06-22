@@ -75,12 +75,10 @@ fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     let (right, left) = (&volume.pages[0].0, &volume.pages[1].0);
 
     Ok(html! {
-        <div style="height: 100vh"> // create a "fullscreen" div
-            <div id="Reader" class="flexbox">
-                <Suspense fallback={html!{}}>
-                    <ReaderPages {db} {volume_id} {left} {right} magnifier={volume.magnifier}/>
-                </Suspense>
-            </div>
+        <div id="Reader">
+            <Suspense fallback={html!{}}>
+                <ReaderPages {db} {volume_id} {left} {right} magnifier={volume.magnifier}/>
+            </Suspense>
         </div>
     })
 }
@@ -123,7 +121,6 @@ fn reader_pages(
             // same location both images.
             // Adapted from here:
             //   www.w3schools.com/howto/howto_js_image_magnifier_glass.asp
-            // TODO: Look into why padding messes this up. It's ok do now but should be fixed.
             e.prevent_default();
 
             let left_img = left_ref.cast::<web_sys::Element>().unwrap();
@@ -175,7 +172,7 @@ fn reader_pages(
 
             // The position of the magnifier element.
             let left = img_left + x - center_x;
-            let top = y - center_y;
+            let top = img_top + y - center_y;
             style.set(format!("left: {left}px; top: {top}px; background: {bg_l}, {bg_r}"));
         })
     };
