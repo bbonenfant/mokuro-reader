@@ -5,7 +5,9 @@ use web_sys::MouseEvent;
 use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, use_mut_ref, use_state};
 use yew::suspense::{Suspense, use_future_with};
 use yew_autoprops::autoprops;
+use yew_router::prelude::Link;
 
+use crate::Route;
 use crate::upload::UploadModal;
 use crate::utils::db::{get_all_volumes, get_page};
 use crate::utils::timestamp;
@@ -51,7 +53,7 @@ fn gallery(db: &Rc<Rexie>, rerender: u64) -> HtmlResult {
     let future = use_future_with(rerender, |_| get_all_volumes(db.clone()))?;
     let volumes = future.as_ref().expect("failed to get all volumes");
     Ok(html! {
-        <div class="flexbox">{
+        <div id="Gallery" class="flexbox">{
             volumes.iter().map(|volume| {
                 let cover = volume.cover();
                 let title = &volume.title;
@@ -79,9 +81,11 @@ fn gallery_volume(db: &Rc<Rexie>, volume_id: u32, title: AttrValue, cover: AttrV
     *state.borrow_mut() = Some(object_url);
 
     Ok(html! {
-        <div id="VolumeCover">
-            <img {src} alt={&title}/>
-            <p>{title}</p>
-        </div>
+        <Link<Route> to={Route::Reader {volume_id}}>
+            <div id="VolumeCover">
+                <img {src} alt={&title}/>
+                <p>{title}</p>
+            </div>
+        </Link<Route>>
     })
 }

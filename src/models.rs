@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use yew::AttrValue;
 
+pub use magnifier::MagnifierSettings;
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct VolumeMetadata {
     #[serde(skip_serializing)]
@@ -15,7 +17,43 @@ pub struct VolumeMetadata {
     pub pages: Box<[(AttrValue, AttrValue)]>,
 
     cover: Option<AttrValue>,
+    #[serde(default)]
+    pub magnifier: MagnifierSettings,
 }
+
+mod magnifier {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+    pub struct MagnifierSettings {
+        #[serde(default = "default_zoom")]
+        pub zoom: u16,
+        #[serde(default = "default_radius")]
+        pub radius: u8,
+        #[serde(default = "default_size")]
+        pub height: u16,
+        #[serde(default = "default_size")]
+        pub width: u16,
+    }
+
+    fn default_zoom() -> u16 { 200 }
+
+    fn default_radius() -> u8 { 35 }
+
+    fn default_size() -> u16 { 350 }
+
+    impl Default for MagnifierSettings {
+        fn default() -> Self {
+            Self {
+                zoom: default_zoom(),
+                radius: default_radius(),
+                height: default_size(),
+                width: default_size(),
+            }
+        }
+    }
+}
+
 
 impl<'a> VolumeMetadata {
     /// Convenience method for getting the name of cover art,

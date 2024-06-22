@@ -58,17 +58,17 @@ pub async fn get_page(db: Rc<Rexie>, volume_id: u32, name: AttrValue) -> Result<
 }
 
 /// The associated rows from `pages` and `ocr` share the same key.
-pub async fn get_page_and_ocr(db: &Rc<Rexie>, key: &JsValue) -> Result<(PageImage, PageOcr)> {
+pub async fn get_page_and_ocr(db: Rc<Rexie>, key: JsValue) -> Result<(PageImage, PageOcr)> {
     let txn = db.transaction(&[P, O], TransactionMode::ReadOnly)?;
     let pages = txn.store(P)?;
-    let page_value: PageImage = pages.get(key).await?.into();
+    let page_value: PageImage = pages.get(&key).await?.into();
 
     let ocr = txn.store(O)?;
-    let ocr_value = ocr.get(key).await?;
+    let ocr_value = ocr.get(&key).await?;
     Ok((page_value, serde_wasm_bindgen::from_value(ocr_value).unwrap()))
 }
 
-pub async fn get_volume(db: &Rc<Rexie>, volume_id: u32) -> Result<VolumeMetadata> {
+pub async fn get_volume(db: Rc<Rexie>, volume_id: u32) -> Result<VolumeMetadata> {
     let value = db.transaction(&[V], TransactionMode::ReadOnly)?
         .store(V)?
         .get(&volume_id.into()).await?;

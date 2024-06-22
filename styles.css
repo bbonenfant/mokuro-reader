@@ -16,12 +16,15 @@ body {
     padding: 0;
     background: var(--background-color);
     color: #fcfcfc;
-}
 
-img,
-video {
-    max-width: 300px;
-    max-height: 500px;
+    /* remove scroll bar for Reader */
+    overflow-y: scroll;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* Internet Explorer 10+ */
+
+    ::-webkit-scrollbar {
+        display: none; /* Safari and Chrome */
+    }
 }
 
 p {
@@ -124,6 +127,15 @@ input#file-upload {
     display: flex;
 }
 
+#Gallery {
+
+    a, a:link, a:visited, a:hover, a:active {
+        /* remove styling on hyperlinks */
+        color: inherit;
+        text-decoration: inherit;
+        font-weight: inherit;
+    }
+}
 
 #VolumeCover {
     margin: 10px;
@@ -133,4 +145,27 @@ input#file-upload {
         width: 257px;
         object-fit: contain;
     }
+}
+
+#Reader {
+    position: relative;
+    justify-content: center;
+    padding-inline: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+
+.reader-image {
+    max-height: 100vh;
+    max-width: 50%;
+    padding-block: 10px;
+}
+
+.magnifier {
+    position: absolute;
+    border: 1px solid #000;
+    cursor: none;
+    /*padding: inherit;*/
+    background-origin: content-box;
 }

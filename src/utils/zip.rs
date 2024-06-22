@@ -26,7 +26,7 @@ pub async fn extract_ziparchive(
         put_volume(&db, &mut volume).await?;
         volume
     };
-    
+
     let cover = volume.cover();
     let cover_object_url = {
         let cover_data = read_zipfile(&mut archive, cover)?;
@@ -55,13 +55,13 @@ pub async fn extract_ziparchive(
     Ok((volume, cover_object_url))
 }
 
-/// construct a zip archive in memory from the volume data stored in the 
+/// construct a zip archive in memory from the volume data stored in the
 /// mokuro IndexedDB. The resultant gloo_file::File is a JS object that
 /// can then be downloaded through the browser.
 pub async fn create_ziparchive(
     db: Rc<Rexie>, volume_id: u32,
 ) -> crate::Result<gloo_file::File> {
-    let volume: VolumeMetadata = get_volume(&db, volume_id).await?;
+    let volume: VolumeMetadata = get_volume(db.clone(), volume_id).await?;
 
     let mut archive = ZipWriter::new(Cursor::new(vec![]));
     let options = SimpleFileOptions::default()
@@ -75,7 +75,7 @@ pub async fn create_ziparchive(
     let id = volume.id.unwrap().into();
     for (page_name, ocr_name) in volume.pages.iter() {
         let key = js_sys::Array::of2(&id, &page_name.as_str().into());
-        let (image, ocr) = get_page_and_ocr(&db, &key).await?;
+        let (image, ocr) = get_page_and_ocr(db.clone(), key.into()).await?;
 
         let image_data = gloo_file_read(image.as_ref()).await
             .expect_throw("failed to convert Blob to Vec<u8>");

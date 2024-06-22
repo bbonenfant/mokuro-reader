@@ -50,7 +50,7 @@ pub fn upload_modal(
         })
     };
     let cancel_click = Callback::from(|e: MouseEvent| e.stop_propagation());
-    let cancel_drag = Callback::from(|e: DragEvent| e.prevent_default());
+    let cancel_drag = &Callback::from(|e: DragEvent| e.prevent_default());
     Ok(html! {
         <div class="modal" onclick={close_modal}>
             <div class="modal-content" onclick={cancel_click}>
@@ -62,7 +62,7 @@ pub fn upload_modal(
                 }
                 <p id="title">{ "Upload Your Files To The Cloud" }</p>
                 <label for="file-upload">
-                    <div id="drop-container" ondrop={ondrop} ondragover={&cancel_drag} ondragenter={&cancel_drag}>
+                    <div id="drop-container" {ondrop} ondragover={cancel_drag} ondragenter={cancel_drag}>
                         <i class="fa fa-cloud-upload"></i>
                         <p>{"Drop your images here or click to select"}</p>
                     </div>
