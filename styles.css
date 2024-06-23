@@ -155,13 +155,18 @@ input#file-upload {
     flex-flow: nowrap;
     align-items: center;
     justify-content: center;
+
+    .reader-image {
+        max-height: 100%;
+        max-width: 50%;
+        
+        &:only-of-type {
+            /* if only displaying a single page, make it full width */
+            max-width: 100%;
+        }
+    }
 }
 
-
-.reader-image {
-    max-height: 100%;
-    max-width: 50%;
-}
 
 .magnifier {
     position: absolute;

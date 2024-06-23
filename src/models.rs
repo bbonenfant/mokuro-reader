@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use yew::AttrValue;
 
 pub use magnifier::MagnifierSettings;
+pub use reader_state::ReaderState;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct VolumeMetadata {
@@ -19,6 +20,8 @@ pub struct VolumeMetadata {
     cover: Option<AttrValue>,
     #[serde(default)]
     pub magnifier: MagnifierSettings,
+    #[serde(default)]
+    pub reader_state: ReaderState,
 }
 
 mod magnifier {
@@ -50,6 +53,33 @@ mod magnifier {
                 height: default_size(),
                 width: default_size(),
             }
+        }
+    }
+}
+
+mod reader_state {
+    use serde::{Deserialize, Serialize};
+    use yew::AttrValue;
+
+    #[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
+    pub struct ReaderState {
+        #[serde(default)]
+        pub single_page: bool,
+        #[serde(default)]
+        pub current_page: usize,
+        #[serde(default)]
+        pub first_page_is_cover: bool,
+    }
+
+    impl ReaderState {
+        pub fn select_pages(&self, pages: &[(AttrValue, AttrValue)]) -> (Option<AttrValue>, Option<AttrValue>) {
+            let get_page = |i: usize| -> Option<AttrValue> {
+                pages.get(i).map(|p| p.0.clone())
+            };
+            if self.single_page || (self.current_page == 0 && self.first_page_is_cover) {
+                return (get_page(self.current_page), None);
+            }
+            (get_page(self.current_page), get_page(self.current_page + 1))
         }
     }
 }
