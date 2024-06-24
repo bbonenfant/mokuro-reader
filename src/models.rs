@@ -4,7 +4,7 @@ use yew::AttrValue;
 pub use magnifier::MagnifierSettings;
 pub use reader_state::ReaderState;
 
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct VolumeMetadata {
     #[serde(skip_serializing)]
     pub id: Option<u32>,
@@ -76,10 +76,30 @@ mod reader_state {
             let get_page = |i: usize| -> Option<AttrValue> {
                 pages.get(i).map(|p| p.0.clone())
             };
-            if self.single_page || (self.current_page == 0 && self.first_page_is_cover) {
+            if self.single_page || (self.current_page == 0 && !self.first_page_is_cover) {
                 return (get_page(self.current_page), None);
             }
             (get_page(self.current_page), get_page(self.current_page + 1))
+        }
+
+        pub fn forward(&mut self) {
+            if self.single_page || (self.current_page == 0 && !self.first_page_is_cover) {
+                self.current_page += 1;
+            } else {
+                self.current_page += 2;
+            }
+        }
+
+        pub fn backward(&mut self) {
+            if self.single_page || (self.current_page == 0 && !self.first_page_is_cover) {
+                if self.current_page > 0 {
+                    self.current_page -= 1;
+                }
+            } else if self.current_page == 1 {
+                self.current_page -= 1;
+            } else if self.current_page > 1 {
+                self.current_page -= 2;
+            }
         }
     }
 }

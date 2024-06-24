@@ -84,7 +84,7 @@ pub async fn get_all_volumes(db: Rc<Rexie>) -> Result<Vec<VolumeMetadata>> {
 
 /// put_config inserts/updates a row within the "volumes" ObjectStore.
 /// If `volume.id` is set, the object is updated.
-pub async fn put_volume(db: &Rc<Rexie>, volume: &mut VolumeMetadata) -> Result<u32> {
+pub async fn put_volume(db: &Rc<Rexie>, volume: &VolumeMetadata) -> Result<u32> {
     let config = serde_wasm_bindgen::to_value(volume).unwrap();
     let key = volume.id.map(|k| JsValue::from_f64(k as f64));
 
@@ -95,7 +95,5 @@ pub async fn put_volume(db: &Rc<Rexie>, volume: &mut VolumeMetadata) -> Result<u
         .await?;
     txn.done().await?;
 
-    let id = volume_id.as_f64().unwrap() as u32;
-    volume.id = Some(id);
-    Ok(id)
+    Ok(volume_id.as_f64().unwrap() as u32)
 }

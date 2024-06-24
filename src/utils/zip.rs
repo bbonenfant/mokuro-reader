@@ -23,7 +23,7 @@ pub async fn extract_ziparchive(
             let data = read_zipfile(&mut archive, "mokuro.json")?;
             serde_json::from_slice::<VolumeMetadata>(&data).unwrap()
         };
-        put_volume(&db, &mut volume).await?;
+        volume.id = Some(put_volume(&db, &mut volume).await?);
         volume
     };
 
