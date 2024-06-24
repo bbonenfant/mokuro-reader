@@ -1,10 +1,9 @@
-use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
 use rexie::Rexie;
 use web_sys::{Event, KeyboardEvent, MouseEvent};
-use yew::{AttrValue, Callback, function_component, html, HtmlResult, NodeRef, UseStateSetter};
+use yew::{AttrValue, Callback, function_component, html, HtmlResult, NodeRef};
 use yew::functional::{use_memo, use_mut_ref, use_node_ref, use_state, use_state_eq};
 use yew::suspense::Suspense;
 use yew_autoprops::autoprops;
@@ -18,6 +17,11 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     let volume = use_volume_reducer(db.clone(), volume_id)?;
     gloo_console::debug!("rerender: Reader");
 
+    let (right, left) = {
+        let v = volume.borrow();
+        v.reader_state.select_pages(&v.pages)
+    };
+
     let cursor = use_mut_ref(|| (0i32, 0i32));
     let magnifier_style = use_state_eq(MagnifierStyle::default);
     let (left_ref, right_ref) = (use_node_ref(), use_node_ref());
@@ -26,9 +30,48 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     let move_magnifier = use_memo(
         volume.borrow().magnifier,
         |magnifier| {
-            magnifier_callback(magnifier, magnifier_style.setter(), left_ref.clone(), right_ref.clone(), cursor.clone())
+            let cursor = cursor.clone();
+            let magnifier = *magnifier;
+            let state = magnifier_style.clone();
+            let (left, right) = (left_ref.clone(), right_ref.clone());
+            // This callback enables the "magnifier" effect around the cursor
+            // when hovering over the images. This is accomplished by create a div,
+            // whose center follows the location of the cursor, having a background
+            // image which is a magnified version of the image being displayed and
+            // positioned/shifted in such a way that the cursor is always above the
+            // same location both images.
+            // Adapted from here:
+            //   www.w3schools.com/howto/howto_js_image_magnifier_glass.asp
+            Callback::from(move |e: MouseEvent| {
+                e.prevent_default();
+                *cursor.borrow_mut() = (e.page_x(), e.page_y());
+                let result =
+                    MagnifierStyle::compute(&cursor.borrow(), &left, &right, &magnifier);
+                if let Ok(value) = result {
+                    state.set(value);
+                }
+            })
         },
     );
+
+    let reload_magnifier = use_memo(
+        volume.borrow().magnifier, |magnifier| {
+            let cursor = cursor.clone();
+            let magnifier = *magnifier;
+            let state = magnifier_style.clone();
+            let (left, right) = (left_ref.clone(), right_ref.clone());
+            // This callback is intended for when the images finish loading.
+            // This will "reload" the magnifier to switch out the background images
+            // allowing the effect to seamlessly work across images.
+            // To do this, we need to keep track of the last cursor location.
+            Callback::from(move |_: Event| {
+                let result =
+                    MagnifierStyle::compute(&cursor.borrow(), &left, &right, &magnifier);
+                if let Ok(value) = result {
+                    state.set(value);
+                }
+            })
+        });
 
     let onkeypress = {
         let volume = volume.clone();
@@ -53,22 +96,9 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
         })
     };
 
-    let onload = {
-        let reducer = magnifier_style.clone();
-        let cursor = cursor.clone();
-        let (left, right) = (left_ref.clone(), right_ref.clone());
-        &Callback::from(move |_: Event| {
-            reducer.set(reducer.calculate(&cursor.borrow(), &left, &right))
-        })
-    };
-
-    let (right, left) = {
-        let v = volume.borrow();
-        v.reader_state.select_pages(&v.pages)
-    };
-
     let hidden = *hide_magnifier;
     let style = magnifier_style.to_string();
+    let onload = reload_magnifier.as_ref();
     let onmousemove = move_magnifier.as_ref();
     Ok(html! {
         <div id="Reader" tabindex="0" {oncontextmenu} {onkeypress}>
@@ -98,37 +128,6 @@ fn reader_page(
     let (src, _ocr) = use_reader_page(db, volume_id, &page_name)?;
     gloo_console::log!("rerender", page_name.as_str());
     Ok(html! { <img ref={img_ref} class="reader-image" {src} {onmousemove} {onload}/> })
-}
-
-fn magnifier_callback(
-    magnifier: &MagnifierSettings,
-    setter: UseStateSetter<MagnifierStyle>,
-    left_ref: NodeRef,
-    right_ref: NodeRef,
-    cursor: Rc<RefCell<(i32, i32)>>,
-) -> Callback<MouseEvent> {
-    let (zoom, m_height, m_width, radius) =
-        (magnifier.zoom as i32, magnifier.height as i32, magnifier.width as i32, magnifier.radius);
-    Callback::from(move |e: MouseEvent| {
-        // This is callback enables the "magnifier" effect around the cursor
-        // when hovering over the images. This is accomplished by create a div,
-        // whose center follows the location of the cursor, having a background
-        // image which is a magnified version of the image being displayed and
-        // positioned/shifted in such a way that the cursor is always above the
-        // same location both images.
-        // Adapted from here:
-        //   www.w3schools.com/howto/howto_js_image_magnifier_glass.asp
-        e.prevent_default();
-        *cursor.borrow_mut() = (e.page_x(), e.page_y());
-
-        let result = MagnifierStyle::calculate_with(
-            &cursor.borrow(), &left_ref, &right_ref, m_height, m_width, radius, zoom,
-        );
-
-        if let Ok(value) = result {
-            setter.set(value);
-        }
-    })
 }
 
 
@@ -174,19 +173,15 @@ impl Display for MagnifierStyle {
 }
 
 impl MagnifierStyle {
-    fn calculate(&self, cursor: &(i32, i32), left_ref: &NodeRef, right_ref: &NodeRef) -> Self {
-        Self::calculate_with(cursor, left_ref, right_ref, self.height, self.width, self.radius, self.zoom).unwrap_or(self.clone())
-    }
-
-    fn calculate_with(
+    fn compute(
         cursor: &(i32, i32),
         left_ref: &NodeRef,
         right_ref: &NodeRef,
-        height: i32,
-        width: i32,
-        radius: u8,
-        zoom: i32,
+        magnifier: &MagnifierSettings,
     ) -> Result<Self, ()> {
+        let (zoom, height, width, radius) =
+            (magnifier.zoom as i32, magnifier.height as i32, magnifier.width as i32, magnifier.radius);
+
         // The node refs may not resolve to a currently rendered HTML elements,
         // i.e. in the case where only one page is being displayed instead of two.
         // If neither node ref is valid, then there's no image to magnify, and so
