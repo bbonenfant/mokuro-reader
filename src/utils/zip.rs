@@ -9,6 +9,8 @@ use zip::{read::ZipArchive, result::ZipError, write::{SimpleFileOptions, ZipWrit
 use crate::models::{PageImage, PageOcr, VolumeMetadata};
 use crate::utils::db::{get_page_and_ocr, get_volume, put_volume, start_bulk_write_txn};
 
+const METADATA_FILE: &str = "mokuro-metadata.json";
+
 /// extract a zip archive in memory and inserts the data into the mokuro IndexedDB.
 pub async fn extract_ziparchive(
     db: Rc<Rexie>, file_obj: gloo_file::File,
@@ -20,10 +22,10 @@ pub async fn extract_ziparchive(
 
     let volume = {
         let mut volume = {
-            let data = read_zipfile(&mut archive, "mokuro.json")?;
+            let data = read_zipfile(&mut archive, METADATA_FILE)?;
             serde_json::from_slice::<VolumeMetadata>(&data).unwrap()
         };
-        volume.id = Some(put_volume(&db, &mut volume).await?);
+        volume.id = Some(put_volume(&db, &volume).await?);
         volume
     };
 
@@ -61,21 +63,21 @@ pub async fn extract_ziparchive(
 pub async fn create_ziparchive(
     db: Rc<Rexie>, volume_id: u32,
 ) -> crate::Result<gloo_file::File> {
-    let volume: VolumeMetadata = get_volume(db.clone(), volume_id).await?;
+    let volume: VolumeMetadata = get_volume(&db, volume_id).await?;
 
     let mut archive = ZipWriter::new(Cursor::new(vec![]));
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Stored);
 
     let metadata = serde_json::to_vec(&volume).unwrap();
-    write_zipfile(&mut archive, "mokuro-metadata.json", &metadata, options)
+    write_zipfile(&mut archive, METADATA_FILE, &metadata, options)
         .expect_throw("failed to write mokuro-config.json to zip archive");
     archive.add_directory("_ocr/", options).unwrap();
 
     let id = volume.id.unwrap().into();
     for (page_name, ocr_name) in volume.pages.iter() {
         let key = js_sys::Array::of2(&id, &page_name.as_str().into());
-        let (image, ocr) = get_page_and_ocr(db.clone(), key.into()).await?;
+        let (image, ocr) = get_page_and_ocr(&db.clone(), &key.into()).await?;
 
         let image_data = gloo_file_read(image.as_ref()).await
             .expect_throw("failed to convert Blob to Vec<u8>");

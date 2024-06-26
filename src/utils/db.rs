@@ -57,18 +57,25 @@ pub async fn get_page(db: Rc<Rexie>, volume_id: u32, name: AttrValue) -> Result<
     Ok(pages.get(&key).await?.into())
 }
 
+pub async fn put_ocr(db: &Rc<Rexie>, ocr: &PageOcr, key: &JsValue) -> Result<()> {
+    let value = serde_wasm_bindgen::to_value(ocr).unwrap();
+    let txn = db.transaction(&[O], TransactionMode::ReadWrite)?;
+    txn.store(O)?.put(&value, Some(key)).await?;
+    Ok(())
+}
+
 /// The associated rows from `pages` and `ocr` share the same key.
-pub async fn get_page_and_ocr(db: Rc<Rexie>, key: JsValue) -> Result<(PageImage, PageOcr)> {
+pub async fn get_page_and_ocr(db: &Rc<Rexie>, key: &JsValue) -> Result<(PageImage, PageOcr)> {
     let txn = db.transaction(&[P, O], TransactionMode::ReadOnly)?;
     let pages = txn.store(P)?;
-    let page_value: PageImage = pages.get(&key).await?.into();
+    let page_value: PageImage = pages.get(key).await?.into();
 
     let ocr = txn.store(O)?;
-    let ocr_value = ocr.get(&key).await?;
+    let ocr_value = ocr.get(key).await?;
     Ok((page_value, serde_wasm_bindgen::from_value(ocr_value).unwrap()))
 }
 
-pub async fn get_volume(db: Rc<Rexie>, volume_id: u32) -> Result<VolumeMetadata> {
+pub async fn get_volume(db: &Rc<Rexie>, volume_id: u32) -> Result<VolumeMetadata> {
     let value = db.transaction(&[V], TransactionMode::ReadOnly)?
         .store(V)?
         .get(&volume_id.into()).await?;
@@ -86,14 +93,8 @@ pub async fn get_all_volumes(db: Rc<Rexie>) -> Result<Vec<VolumeMetadata>> {
 /// If `volume.id` is set, the object is updated.
 pub async fn put_volume(db: &Rc<Rexie>, volume: &VolumeMetadata) -> Result<u32> {
     let config = serde_wasm_bindgen::to_value(volume).unwrap();
-    let key = volume.id.map(|k| JsValue::from_f64(k as f64));
-
     let txn = db.transaction(&[V], TransactionMode::ReadWrite)?;
-    let volume_id = txn
-        .store(V)?
-        .put(&config, key.as_ref())
-        .await?;
+    let volume_id = txn.store(V)?.put(&config, None).await?;
     txn.done().await?;
-
     Ok(volume_id.as_f64().unwrap() as u32)
 }

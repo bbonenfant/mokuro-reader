@@ -1,15 +1,19 @@
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
+use enclose::enclose;
 use rexie::Rexie;
-use web_sys::{Event, KeyboardEvent, MouseEvent};
-use yew::{AttrValue, Callback, function_component, html, HtmlResult, NodeRef};
-use yew::functional::{use_memo, use_mut_ref, use_node_ref, use_state, use_state_eq};
+use wasm_bindgen::JsCast;
+use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
+use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, NodeRef};
+use yew::functional::{use_effect_with, use_memo, use_mut_ref, use_node_ref, use_state};
 use yew::suspense::Suspense;
 use yew_autoprops::autoprops;
+use yew_hooks::{use_event_with_window, use_toggle};
 
-use crate::models::MagnifierSettings;
-use crate::utils::hooks::{use_reader_page, use_volume_reducer, VolumeAction};
+use crate::models::{MagnifierSettings, OcrBlock};
+use crate::utils::hooks::{CursorAction, PageAction, use_cursor, use_page_reducer, use_volume_reducer, VolumeAction};
+use crate::utils::web::get_screen_size;
 
 #[autoprops]
 #[function_component(Reader)]
@@ -17,98 +21,89 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     let volume = use_volume_reducer(db.clone(), volume_id)?;
     gloo_console::debug!("rerender: Reader");
 
-    let (right, left) = {
-        let v = volume.borrow();
-        v.reader_state.select_pages(&v.pages)
-    };
+    // State
+    let (cursor, c_signal) = use_cursor();
+    let editable = use_toggle(false, true);
+    let (reader, left, right) = (use_node_ref(), use_node_ref(), use_node_ref());
+    let window = use_state(WindowState::default);
 
-    let cursor = use_mut_ref(|| (0i32, 0i32));
-    let magnifier_style = use_state_eq(MagnifierStyle::default);
-    let (left_ref, right_ref) = (use_node_ref(), use_node_ref());
+    let (right_page, left_page) =
+        volume.data.reader_state.select_pages(&volume.data.pages);
 
-    // Use a memo for the magnifier callback to prevent unnecessary renders of ReaderPage.
-    let move_magnifier = use_memo(
-        volume.borrow().magnifier,
-        |magnifier| {
-            let cursor = cursor.clone();
-            let magnifier = *magnifier;
-            let state = magnifier_style.clone();
-            let (left, right) = (left_ref.clone(), right_ref.clone());
-            // This callback enables the "magnifier" effect around the cursor
-            // when hovering over the images. This is accomplished by create a div,
-            // whose center follows the location of the cursor, having a background
-            // image which is a magnified version of the image being displayed and
-            // positioned/shifted in such a way that the cursor is always above the
-            // same location both images.
-            // Adapted from here:
-            //   www.w3schools.com/howto/howto_js_image_magnifier_glass.asp
-            Callback::from(move |e: MouseEvent| {
-                e.prevent_default();
-                *cursor.borrow_mut() = (e.page_x(), e.page_y());
-                let result =
-                    MagnifierStyle::compute(&cursor.borrow(), &left, &right, &magnifier);
-                if let Ok(value) = result {
-                    state.set(value);
-                }
-            })
-        },
-    );
+    // Focus on the reader div when pages change.
+    // This is so that the keyboard shortcuts will be caught and handled
+    //  without needing to click the page.
+    { // For some reason, using enclose! here causes use_effect to not fire.
+        let ref_ = reader.clone();
+        use_effect_with((right_page.clone(), left_page.clone()), move |_| {
+            gloo_console::log!("focus");
+            let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
+        })
+    }
 
-    let reload_magnifier = use_memo(
-        volume.borrow().magnifier, |magnifier| {
-            let cursor = cursor.clone();
-            let magnifier = *magnifier;
-            let state = magnifier_style.clone();
-            let (left, right) = (left_ref.clone(), right_ref.clone());
-            // This callback is intended for when the images finish loading.
-            // This will "reload" the magnifier to switch out the background images
-            // allowing the effect to seamlessly work across images.
-            // To do this, we need to keep track of the last cursor location.
-            Callback::from(move |_: Event| {
-                let result =
-                    MagnifierStyle::compute(&cursor.borrow(), &left, &right, &magnifier);
-                if let Ok(value) = result {
-                    state.set(value);
-                }
-            })
-        });
-
-    let onkeypress = {
-        let volume = volume.clone();
+    // These are the keyboard shortcuts/commands.
+    let handle_keypress = use_memo((), enclose!((editable, volume) |_| {
         Callback::from(move |e: KeyboardEvent| {
             // gloo_console::log!("KeyCode:", e.code());
-            if e.code() == "KeyZ" {
-                volume.dispatch(VolumeAction::NextPage);
-            }
-            if e.code() == "KeyX" {
-                volume.dispatch(VolumeAction::PrevPage);
-            }
+            if e.code() == "KeyE" { editable.toggle(); }
+            else if e.code() == "KeyX" { volume.dispatch(VolumeAction::PrevPage); }
+            else if e.code() == "KeyZ" { volume.dispatch(VolumeAction::NextPage); }
         })
-    };
+    }));
 
-    // override the right click to toggle the magnifier
-    let hide_magnifier = use_state(|| true);
-    let oncontextmenu = {
-        let state = hide_magnifier.clone();
-        &Callback::from(move |e: MouseEvent| {
+    // Hook into resize event of the window.
+    // We need to keep track of the size of the page images.
+    use_event_with_window("resize", enclose!((left, right, window) move |_: Event| {
+        let screen = Screen::new();
+        let left = Rect::try_from(&left).unwrap_or(window.left);
+        let right = Rect::try_from(&right).unwrap_or(window.right);
+        window.set(WindowState { screen, left, right })
+    }));
+
+    // Track cursor movements. This needed for the magnifier.
+    let update_cursor = use_memo((), enclose!((c_signal) |_| {
+        Callback::from(move |e| { c_signal.dispatch(CursorAction::Update(e)) })
+    }));
+
+    // This callback is intended for when the images finish loading.
+    // This registers the size of the page images and then force re-renders
+    // the magnifier component. The force re-render is necessary to update
+    // the background images, allowing the effect to seamlessly work across pages.
+    let on_image_load = use_memo((), enclose!((c_signal, left, right, window) |_|
+        Callback::from(move |_: Event| {
+            c_signal.dispatch(CursorAction::ForceRerender);
+            let left = Rect::try_from(&left).unwrap_or(window.left);
+            let right = Rect::try_from(&right).unwrap_or(window.right);
+            window.set(WindowState { screen: window.screen, left, right });
+        })
+    ));
+
+    // Override the right click to toggle the magnifier
+    let handle_right_click = use_memo((), enclose!((c_signal) move |_|
+        Callback::from(move |e: MouseEvent| {
             e.prevent_default();
-            state.set(!*state);
+            c_signal.dispatch(CursorAction::Toggle);
         })
-    };
+    ));
 
-    let hidden = *hide_magnifier;
-    let style = magnifier_style.to_string();
-    let onload = reload_magnifier.as_ref();
-    let onmousemove = move_magnifier.as_ref();
+    let show_magnifier = cursor.magnify;
+    let editable = *editable;
+    let settings = volume.data.magnifier;
+    let (cursor, force) = (cursor.position, cursor.force);
+    let (left, right) = (&left, &right);
+    let oncontextmenu = handle_right_click.as_ref();
+    let onkeypress = handle_keypress.as_ref();
+    let onload = on_image_load.as_ref();
+    let onmousemove = update_cursor.as_ref();
     Ok(html! {
-        <div id="Reader" tabindex="0" {oncontextmenu} {onkeypress}>
-            <div class="magnifier" {hidden} {style} {onmousemove}/>
+        <div ref={reader} id="Reader" tabindex="0" {oncontextmenu} {onkeypress} {onmousemove}>
+            if show_magnifier { <Magnifier {cursor} {settings} {left} {right} {force}/> }
             <Suspense fallback={html!{}}>
-            if let Some(page_name) = left {
-                <ReaderPage {db} {volume_id} {page_name} img_ref={left_ref} {onmousemove} {onload}/>
+            if let Some(name) = left_page {
+                <ReaderPage {db} {volume_id} {name} img_ref={left} rect={window.left} {editable} {onload}/>
             }
-            if let Some(page_name) = right {
-                <ReaderPage {db} {volume_id} {page_name} img_ref={right_ref} {onmousemove} {onload}/>
+            if let Some(name) = right_page {
+                <ReaderPage {db} {volume_id} {name} img_ref={right} rect={window.right} {editable} {onload}/>
             }
             </Suspense>
         </div>
@@ -116,20 +111,112 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
 }
 
 #[autoprops]
+#[function_component(Magnifier)]
+fn magnifier(
+    cursor: (i32, i32),
+    settings: &MagnifierSettings,
+    left: &NodeRef,
+    right: &NodeRef,
+    force: u64,
+) -> Html {
+    let _ = force;
+    let style = use_mut_ref(MagnifierStyle::default);
+    let result = MagnifierStyle::compute(&cursor, left, right, settings);
+    if let Ok(value) = result {
+        *style.borrow_mut() = value;
+    }
+    let style = style.borrow().to_string();
+    html! {<div class="magnifier" {style}/>}
+}
+
+#[autoprops]
 #[function_component(ReaderPage)]
 fn reader_page(
     db: &Rc<Rexie>,
     volume_id: u32,
-    page_name: AttrValue,
+    name: AttrValue,
     img_ref: &NodeRef,
-    onmousemove: &Callback<MouseEvent>,
+    rect: &Rect,
+    editable: bool,
     onload: Callback<Event>,
 ) -> HtmlResult {
-    let (src, _ocr) = use_reader_page(db, volume_id, &page_name)?;
-    gloo_console::log!("rerender", page_name.as_str());
-    Ok(html! { <img ref={img_ref} class="reader-image" {src} {onmousemove} {onload}/> })
+    let reducer = use_page_reducer(db.clone(), volume_id, name)?;
+    let signal = reducer.dispatcher();
+
+    let update_db = Callback::from(enclose!((signal)
+        move |block: OcrBlock| signal.dispatch(PageAction::UpdateBlock(block))
+    ));
+    // gloo_console::log!("rerender", page_name.as_str());
+
+    let rect = *rect;
+    let src = &reducer.url;
+    let scale = rect.scale(reducer.ocr.img_height);
+    let Rect { top, left, height, width, .. } = rect;
+    let style = format!(
+        "position: absolute; \
+         top: {top:.2}px; left: {left:.2}px; \
+         height: {height:.2}px; width: {width:.2}px; \
+         border: 2px solid red;",
+    );
+    Ok(html! {
+        <>
+        <div {style}  />
+        <img ref={img_ref} class="reader-image" {src} {onload}/>
+        {
+            reducer.ocr.blocks.iter().map(|block| {
+                html!{<OcrTextBox {editable} {rect} {scale} block={block.clone()} update_db={&update_db}/>}
+            }).collect::<Html>()
+        }
+        </>
+    })
 }
 
+#[autoprops]
+#[function_component(OcrTextBox)]
+fn ocr_text_block(
+    editable: bool,
+    rect: &Rect,
+    scale: f64,
+    block: &OcrBlock,
+    update_db: &Callback<OcrBlock>,
+) -> Html {
+    let top = rect.top + ((block.box_.1 as f64) / scale);
+    let left = rect.left + ((block.box_.0 as f64) / scale);
+    let height = ((block.box_.3 - block.box_.1) as f64) / scale;
+    let width = ((block.box_.2 - block.box_.0) as f64) / scale;
+    let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
+    let font = (block.font_size as f64) / scale;
+
+    let style = format!(
+        "top: {top:.2}px; left: {left:.2}px; \
+         min-height: {height:.2}px; min-width: {width:.2}px; \
+         font-size: {font:.1}px; writing-mode: {mode};"
+    );
+    let key = block.uuid.as_str();
+    let contenteditable = if editable { Some("true") } else { None };
+    let draggable = Some("false");
+    let onblur = enclose!((block) update_db.reform(move |e: FocusEvent| {
+        gloo_console::log!("onblur");
+        let target = e.target().unwrap();
+        let div = target.dyn_ref::<web_sys::HtmlElement>().unwrap();
+        let children = div.children();
+        let mut lines = vec![];
+        for index in 0..children.length() {
+            let child = children.item(index).unwrap();
+            if let Some(text) = child.text_content() {
+                lines.push(AttrValue::from(text))
+            }
+        }
+        OcrBlock { lines, uuid: block.uuid.clone(), ..block }
+    }));
+    let onfocus = Callback::from(|_| gloo_console::log!("onfocus"));
+    let onkeypress = Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true));
+    html! {
+        <div {key} class="ocr-block" {contenteditable} {draggable} {style} {onblur} {onfocus} {onkeypress}>
+            {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
+        </div>
+    }
+}
 
 #[derive(Clone, Default, PartialEq)]
 struct BackgroundStyle {
@@ -243,4 +330,75 @@ impl MagnifierStyle {
         let top = img_top + y - center_y;
         Ok(MagnifierStyle { left_, right_, left, top, width, height, radius, zoom })
     }
+}
+
+#[derive(Copy, Clone, PartialEq)]
+struct Screen {
+    width: u32,
+    height: u32,
+}
+
+impl Screen {
+    fn new() -> Self {
+        let (width, height) = get_screen_size();
+        Self { width, height }
+    }
+}
+
+impl Default for Screen {
+    fn default() -> Self {
+        let (width, height) = get_screen_size();
+        Self { width, height }
+    }
+}
+
+impl Display for Screen {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Screen({}px, {}px)", self.width, self.height)
+    }
+}
+
+#[derive(Copy, Clone, Default, PartialEq)]
+struct Rect {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+    height: f64,
+    width: f64,
+}
+
+impl Rect {
+    fn scale(&self, height: u32) -> f64 {
+        (height as f64) / self.height
+    }
+}
+
+impl From<web_sys::DomRect> for Rect {
+    fn from(value: web_sys::DomRect) -> Self {
+        Self {
+            top: value.top(),
+            left: value.left(),
+            bottom: value.bottom(),
+            right: value.right(),
+            height: value.height(),
+            width: value.width(),
+        }
+    }
+}
+
+impl TryFrom<&NodeRef> for Rect {
+    type Error = ();
+    fn try_from(value: &NodeRef) -> Result<Self, Self::Error> {
+        value.cast::<web_sys::Element>().map(|element| {
+            element.get_bounding_client_rect().into()
+        }).ok_or(())
+    }
+}
+
+#[derive(Copy, Clone, Default)]
+struct WindowState {
+    screen: Screen,
+    left: Rect,
+    right: Rect,
 }

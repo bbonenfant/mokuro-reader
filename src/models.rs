@@ -6,7 +6,7 @@ pub use reader_state::ReaderState;
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct VolumeMetadata {
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<u32>,
     pub version: AttrValue,
     pub created_at: AttrValue,
@@ -116,20 +116,21 @@ impl<'a> VolumeMetadata {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct PageOcr {
     pub img_width: u32,
     pub img_height: u32,
     pub blocks: Vec<OcrBlock>,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct OcrBlock {
+    pub uuid: AttrValue,
     #[serde(rename = "box")]
     pub box_: (u32, u32, u32, u32),
     pub vertical: bool,
     pub font_size: u32,
-    pub lines: Vec<String>,
+    pub lines: Vec<AttrValue>,
     // lines_coords: Vec<Vec<(f32, f32)>>,
 }
 

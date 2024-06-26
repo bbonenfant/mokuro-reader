@@ -159,7 +159,7 @@ input#file-upload {
     .reader-image {
         max-height: 100%;
         max-width: 50%;
-        
+
         &:only-of-type {
             /* if only displaying a single page, make it full width */
             max-width: 100%;
@@ -172,6 +172,17 @@ input#file-upload {
     position: absolute;
     border: 1px solid #000;
     cursor: none;
-    /*padding: inherit;*/
-    background-origin: content-box;
+    z-index: 10;
+}
+
+.ocr-block {
+    position: absolute;
+    color: black;
+    resize: both;
+
+    > p {
+        background-color: white;
+        display: table;
+        margin: 0;
+    }
 }
