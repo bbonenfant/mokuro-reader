@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use enclose::enclose;
 use rexie::Rexie;
-use wasm_bindgen::JsCast;
-use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
+use wasm_bindgen::{JsCast, UnwrapThrowExt};
+use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
 use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, NodeRef};
 use yew::functional::{use_effect_with, use_memo, use_mut_ref, use_node_ref, use_state};
 use yew::suspense::Suspense;
@@ -13,7 +13,7 @@ use yew_hooks::{use_event_with_window, use_toggle};
 
 use crate::models::{MagnifierSettings, OcrBlock};
 use crate::utils::hooks::{CursorAction, PageAction, use_cursor, use_page_reducer, use_volume_reducer, VolumeAction};
-use crate::utils::web::get_screen_size;
+use crate::utils::web::{get_screen_size, get_selected_text};
 
 #[autoprops]
 #[function_component(Reader)]
@@ -186,15 +186,12 @@ fn ocr_text_block(
     let width = ((block.box_.2 - block.box_.0) as f64) / scale;
     let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
     let font = (block.font_size as f64) / scale;
-
     let style = format!(
         "top: {top:.2}px; left: {left:.2}px; \
          min-height: {height:.2}px; min-width: {width:.2}px; \
          font-size: {font:.1}px; writing-mode: {mode};"
     );
-    let key = block.uuid.as_str();
-    let contenteditable = if editable { Some("true") } else { None };
-    let draggable = Some("false");
+
     let onblur = enclose!((block) update_db.reform(move |e: FocusEvent| {
         gloo_console::log!("onblur");
         let target = e.target().unwrap();
@@ -209,10 +206,29 @@ fn ocr_text_block(
         }
         OcrBlock { lines, uuid: block.uuid.clone(), ..block }
     }));
+
+    let remove_newlines = use_memo((), |_|
+    Callback::from(move |e: Event| {
+        let e = e.dyn_into::<ClipboardEvent>()
+            .expect_throw("couldn't convert to ClipboardEvent");
+        if let Some(text) = get_selected_text() {
+            if let Some(clipboard) = e.clipboard_data() {
+                clipboard.set_data("text/plain", &text.replace('\n', ""))
+                    .expect("couldn't write to clipboard");
+                e.prevent_default();
+            }
+        }
+    }),
+    );
+
+    let key = block.uuid.as_str();
+    let contenteditable = if editable { Some("true") } else { None };
+    let draggable = Some("false");
+    let oncopy = remove_newlines.as_ref();
     let onfocus = Callback::from(|_| gloo_console::log!("onfocus"));
     let onkeypress = Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true));
     html! {
-        <div {key} class="ocr-block" {contenteditable} {draggable} {style} {onblur} {onfocus} {onkeypress}>
+        <div {key} class="ocr-block" {contenteditable} {draggable} {style} {onblur} {oncopy} {onfocus} {onkeypress}>
             {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
         </div>
     }
