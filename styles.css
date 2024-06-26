@@ -160,6 +160,9 @@ input#file-upload {
         max-height: 100%;
         max-width: 50%;
 
+        -webkit-user-select: none;
+        user-select: none;
+
         &:only-of-type {
             /* if only displaying a single page, make it full width */
             max-width: 100%;
@@ -183,6 +186,11 @@ input#file-upload {
     > p {
         background-color: white;
         display: table;
+        opacity: 0;
         margin: 0;
+    }
+
+    &:hover > p {
+        opacity: 1
     }
 }

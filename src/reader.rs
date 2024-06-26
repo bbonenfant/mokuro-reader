@@ -5,8 +5,8 @@ use enclose::enclose;
 use rexie::Rexie;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
-use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, NodeRef};
-use yew::functional::{use_effect_with, use_memo, use_mut_ref, use_node_ref, use_state};
+use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, NodeRef, use_effect};
+use yew::functional::{use_memo, use_mut_ref, use_node_ref, use_state};
 use yew::suspense::Suspense;
 use yew_autoprops::autoprops;
 use yew_hooks::{use_event_with_window, use_toggle};
@@ -35,7 +35,7 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     //  without needing to click the page.
     { // For some reason, using enclose! here causes use_effect to not fire.
         let ref_ = reader.clone();
-        use_effect_with((right_page.clone(), left_page.clone()), move |_| {
+        use_effect(move || {
             gloo_console::log!("focus");
             let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
         })
@@ -146,21 +146,13 @@ fn reader_page(
     let update_db = Callback::from(enclose!((signal)
         move |block: OcrBlock| signal.dispatch(PageAction::UpdateBlock(block))
     ));
-    // gloo_console::log!("rerender", page_name.as_str());
+    // gloo_console::log!("rerender", name.as_str());
 
     let rect = *rect;
     let src = &reducer.url;
     let scale = rect.scale(reducer.ocr.img_height);
-    let Rect { top, left, height, width, .. } = rect;
-    let style = format!(
-        "position: absolute; \
-         top: {top:.2}px; left: {left:.2}px; \
-         height: {height:.2}px; width: {width:.2}px; \
-         border: 2px solid red;",
-    );
     Ok(html! {
         <>
-        <div {style}  />
         <img ref={img_ref} class="reader-image" {src} {onload}/>
         {
             reducer.ocr.blocks.iter().map(|block| {
@@ -186,10 +178,11 @@ fn ocr_text_block(
     let width = ((block.box_.2 - block.box_.0) as f64) / scale;
     let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
     let font = (block.font_size as f64) / scale;
+    let outline = if editable { "outline: 1.5px solid red;" } else { "" };
     let style = format!(
         "top: {top:.2}px; left: {left:.2}px; \
          min-height: {height:.2}px; min-width: {width:.2}px; \
-         font-size: {font:.1}px; writing-mode: {mode};"
+         font-size: {font:.1}px; writing-mode: {mode}; {outline}"
     );
 
     let onblur = enclose!((block) update_db.reform(move |e: FocusEvent| {

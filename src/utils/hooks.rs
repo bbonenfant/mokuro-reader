@@ -30,7 +30,7 @@ mod page {
         // This second call will register the dependency with the use_future_with
         // hook. With the registered dependency, the ocr DB entry will be updated
         // whenever the reducer's state changes.
-        use_future_with((page_name.clone(), reducer.clone()), |deps| async move {
+        use_future_with((page_name, reducer.clone()), |deps| async move {
             let (name, r) = &*deps;
             let key = JsValue::from(js_sys::Array::of2(&volume_id.into(), &name.as_str().into()));
             gloo_console::log!("use_page_reducer", name.as_str());
