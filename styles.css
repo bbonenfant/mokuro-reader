@@ -186,11 +186,12 @@ input#file-upload {
     > p {
         background-color: white;
         display: table;
-        opacity: 0;
         margin: 0;
+        opacity: 0;
+        padding-inline: 2px;
     }
 
-    &:hover > p {
+    &:hover > p, &:focus > p {
         opacity: 1
     }
 }

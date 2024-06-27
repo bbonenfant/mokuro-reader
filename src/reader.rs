@@ -5,15 +5,15 @@ use enclose::enclose;
 use rexie::Rexie;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
-use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, NodeRef, use_effect};
-use yew::functional::{use_memo, use_mut_ref, use_node_ref, use_state};
+use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, NodeRef};
+use yew::functional::{use_effect, use_memo, use_mut_ref, use_node_ref, use_state};
 use yew::suspense::Suspense;
 use yew_autoprops::autoprops;
 use yew_hooks::{use_event_with_window, use_toggle};
 
 use crate::models::{MagnifierSettings, OcrBlock};
-use crate::utils::hooks::{CursorAction, PageAction, use_cursor, use_page_reducer, use_volume_reducer, VolumeAction};
-use crate::utils::web::{get_screen_size, get_selected_text};
+use crate::utils::hooks::{CursorAction, OcrAction, PageAction, use_cursor, use_ocr_reducer, use_page_reducer, use_volume_reducer, VolumeAction};
+use crate::utils::web::{get_screen_size, get_selection};
 
 #[autoprops]
 #[function_component(Reader)]
@@ -36,7 +36,6 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     { // For some reason, using enclose! here causes use_effect to not fire.
         let ref_ = reader.clone();
         use_effect(move || {
-            gloo_console::log!("focus");
             let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
         })
     }
@@ -65,12 +64,17 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
         Callback::from(move |e| { c_signal.dispatch(CursorAction::Update(e)) })
     }));
 
+    let fallback = use_mut_ref(yew::virtual_dom::VNode::default);
     // This callback is intended for when the images finish loading.
     // This registers the size of the page images and then force re-renders
     // the magnifier component. The force re-render is necessary to update
     // the background images, allowing the effect to seamlessly work across pages.
-    let on_image_load = use_memo((), enclose!((c_signal, left, right, window) |_|
+    let on_image_load = use_memo((), enclose!((c_signal, fallback, left, right, window) |_|
         Callback::from(move |_: Event| {
+            // Set a fallback for the ReaderPage Suspense.
+            // This will prevent the images from flashing on rerender.
+            *fallback.borrow_mut() = generate_suspense_fallback(&left, &right);
+
             c_signal.dispatch(CursorAction::ForceRerender);
             let left = Rect::try_from(&left).unwrap_or(window.left);
             let right = Rect::try_from(&right).unwrap_or(window.right);
@@ -88,6 +92,7 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
 
     let show_magnifier = cursor.magnify;
     let editable = *editable;
+    let fallback = fallback.borrow().clone();
     let settings = volume.data.magnifier;
     let (cursor, force) = (cursor.position, cursor.force);
     let (left, right) = (&left, &right);
@@ -98,7 +103,7 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     Ok(html! {
         <div ref={reader} id="Reader" tabindex="0" {oncontextmenu} {onkeypress} {onmousemove}>
             if show_magnifier { <Magnifier {cursor} {settings} {left} {right} {force}/> }
-            <Suspense fallback={html!{}}>
+            <Suspense fallback={fallback}>
             if let Some(name) = left_page {
                 <ReaderPage {db} {volume_id} {name} img_ref={left} rect={window.left} {editable} {onload}/>
             }
@@ -144,7 +149,9 @@ fn reader_page(
     let signal = reducer.dispatcher();
 
     let update_db = Callback::from(enclose!((signal)
-        move |block: OcrBlock| signal.dispatch(PageAction::UpdateBlock(block))
+        move |b: Option<OcrBlock>| {
+            if let Some(b) = b { signal.dispatch(PageAction::UpdateBlock(b)); }
+        }
     ));
     // gloo_console::log!("rerender", name.as_str());
 
@@ -163,6 +170,17 @@ fn reader_page(
     })
 }
 
+fn generate_suspense_fallback(left: &NodeRef, right: &NodeRef) -> Html {
+    html! {<>
+        if let Some(elm) = left.cast::<web_sys::Element>() {
+            {Html::from_html_unchecked(elm.outer_html().into())}
+        }
+        if let Some(elm) = right.cast::<web_sys::Element>() {
+            {Html::from_html_unchecked(elm.outer_html().into())}
+        }
+    </>}
+}
+
 #[autoprops]
 #[function_component(OcrTextBox)]
 fn ocr_text_block(
@@ -170,41 +188,59 @@ fn ocr_text_block(
     rect: &Rect,
     scale: f64,
     block: &OcrBlock,
-    update_db: &Callback<OcrBlock>,
+    update_db: &Callback<Option<OcrBlock>>,
 ) -> Html {
+    let state = use_ocr_reducer(editable);
+    let signal = state.dispatcher();
+
     let top = rect.top + ((block.box_.1 as f64) / scale);
     let left = rect.left + ((block.box_.0 as f64) / scale);
     let height = ((block.box_.3 - block.box_.1) as f64) / scale;
     let width = ((block.box_.2 - block.box_.0) as f64) / scale;
     let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
     let font = (block.font_size as f64) / scale;
-    let outline = if editable { "outline: 1.5px solid red;" } else { "" };
+    let (cursor, outline, user_select) = (state.cursor(), state.outline(), state.user_select());
     let style = format!(
         "top: {top:.2}px; left: {left:.2}px; \
          min-height: {height:.2}px; min-width: {width:.2}px; \
-         font-size: {font:.1}px; writing-mode: {mode}; {outline}"
+         font-size: {font:.1}px; writing-mode: {mode}; \
+         {cursor} {outline} {user_select}"
     );
 
-    let onblur = enclose!((block) update_db.reform(move |e: FocusEvent| {
-        gloo_console::log!("onblur");
-        let target = e.target().unwrap();
-        let div = target.dyn_ref::<web_sys::HtmlElement>().unwrap();
-        let children = div.children();
-        let mut lines = vec![];
-        for index in 0..children.length() {
-            let child = children.item(index).unwrap();
-            if let Some(text) = child.text_content() {
-                lines.push(AttrValue::from(text))
+    let onblur = enclose!((block, state) update_db.reform(move |e: FocusEvent| {
+        state.dispatch(OcrAction::Unfocus); // maybe problematic to have it here
+        if state.contenteditable().is_some() {
+            let target = e.target().unwrap();
+            let div = target.dyn_ref::<web_sys::HtmlElement>().unwrap();
+            let children = div.children();
+            let mut lines = vec![];
+            for index in 0..children.length() {
+                let child = children.item(index).unwrap();
+                if let Some(text) = child.text_content() {
+                    lines.push(AttrValue::from(text))
+                }
+            }
+            if lines != block.lines {
+                return Some(OcrBlock { lines, uuid: block.uuid.clone(), ..block })
             }
         }
-        OcrBlock { lines, uuid: block.uuid.clone(), ..block }
+        None
     }));
+
+    let onclick = enclose!((signal)
+        Callback::from(move |_| signal.dispatch(OcrAction::Focus))
+    );
+
+    let ondblclick = enclose!((signal)
+        Callback::from(move |_| signal.dispatch(OcrAction::EditContent))
+    );
 
     let remove_newlines = use_memo((), |_|
     Callback::from(move |e: Event| {
         let e = e.dyn_into::<ClipboardEvent>()
             .expect_throw("couldn't convert to ClipboardEvent");
-        if let Some(text) = get_selected_text() {
+        let selection = get_selection().and_then(|s| s.to_string().as_string());
+        if let Some(text) = selection {
             if let Some(clipboard) = e.clipboard_data() {
                 clipboard.set_data("text/plain", &text.replace('\n', ""))
                     .expect("couldn't write to clipboard");
@@ -215,13 +251,18 @@ fn ocr_text_block(
     );
 
     let key = block.uuid.as_str();
-    let contenteditable = if editable { Some("true") } else { None };
+    let contenteditable = state.contenteditable();
     let draggable = Some("false");
     let oncopy = remove_newlines.as_ref();
     let onfocus = Callback::from(|_| gloo_console::log!("onfocus"));
-    let onkeypress = Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true));
+    let onkeypress = if contenteditable.is_some() {
+        Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true))
+    } else { Callback::default() };
     html! {
-        <div {key} class="ocr-block" {contenteditable} {draggable} {style} {onblur} {oncopy} {onfocus} {onkeypress}>
+        <div
+          ref={&state.ref_} {key} class={"ocr-block"}
+          {contenteditable} {draggable} {style} tabindex={"-1"}
+          {onblur} {onclick} {oncopy} {ondblclick} {onfocus} {onkeypress}>
             {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
         </div>
     }

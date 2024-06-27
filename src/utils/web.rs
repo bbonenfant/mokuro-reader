@@ -26,7 +26,13 @@ pub fn window() -> web_sys::Window {
 }
 
 /// Try to get selected text within the html document.
-pub fn get_selected_text() -> Option<String> {
+pub fn get_selection() -> Option<web_sys::Selection> {
     window().get_selection().ok().flatten()
-        .and_then(|s| s.to_string().as_string())
+}
+
+#[inline(always)]
+pub fn focus(node: &yew::NodeRef) -> bool {
+    node.cast::<web_sys::HtmlElement>()
+        .expect_throw("Could not resolve node reference")
+        .focus().is_ok()
 }

@@ -1,6 +1,155 @@
 pub use cursor::{CursorAction, use_cursor};
+pub use ocr::{OcrAction, use_ocr_reducer};
 pub use page::{PageAction, use_page_reducer};
 pub use volume::{use_volume_reducer, VolumeAction};
+
+mod ocr {
+    use std::fmt::{Display, Formatter};
+    use std::rc::Rc;
+
+    use yew::{NodeRef, Reducible, UseReducerHandle};
+    use yew::functional::{hook, use_node_ref, use_reducer_eq};
+
+    use crate::utils::web::{focus, get_selection};
+
+    #[hook]
+    pub fn use_ocr_reducer(editable: bool) -> UseReducerHandle<OcrState> {
+        let ref_ = use_node_ref();
+        let reducer = use_reducer_eq(move || {
+            OcrState { ref_, state: TextBlockState::from_editable(editable) }
+        });
+        // TODO: this causes double render.
+        reducer.dispatch(OcrAction::Editable(editable));
+        reducer
+    }
+
+    #[derive(Copy, Clone, Debug, Default, PartialEq)]
+    pub enum TextBlockState {
+        #[default]
+        Default,
+        Editable,
+        EditableFocused,
+        EditableFocusedContent,
+    }
+
+    impl TextBlockState {
+        fn from_editable(editable: bool) -> Self {
+            if editable { Self::Editable } else { Self::Default }
+        }
+
+        fn editable(&self) -> bool {
+            matches!(self, Self::Editable | Self::EditableFocused | Self::EditableFocusedContent)
+        }
+
+        fn focus(self) -> Self {
+            match self {
+                Self::Default => Self::Default,
+                Self::Editable | Self::EditableFocused => Self::EditableFocused,
+                Self::EditableFocusedContent => Self::EditableFocusedContent,
+            }
+        }
+
+        fn unfocus(self) -> Self {
+            if self.editable() { Self::Editable } else { Self::Default }
+        }
+
+        fn to_content_editable(self) -> Self {
+            if self == Self::EditableFocused { return Self::EditableFocusedContent; }
+            self
+        }
+    }
+
+    impl Display for TextBlockState {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{self:?}")
+        }
+    }
+
+    pub struct OcrState {
+        pub ref_: NodeRef,
+        pub state: TextBlockState,
+    }
+
+
+    type TBS = TextBlockState;
+
+    impl OcrState {
+        pub fn editable(&self) -> bool {
+            self.state.editable()
+        }
+
+        pub fn contenteditable(&self) -> Option<&'static str> {
+            if self.state == TBS::EditableFocusedContent {
+                return Some("true");
+            }
+            None
+        }
+
+        pub fn cursor(&self) -> &str {
+            match self.state {
+                TBS::Default | TBS::EditableFocusedContent => "",
+                TBS::Editable => "cursor: pointer;",
+                TBS::EditableFocused => "cursor: move;"
+            }
+        }
+
+        pub fn outline(&self) -> &str {
+            if self.state.editable() { "outline: 1.5px solid red;" } else { "" }
+        }
+
+        pub fn user_select(&self) -> &str {
+            match self.state {
+                TBS::Editable | TBS::EditableFocused => "user-select: none;",
+                TBS::Default | TBS::EditableFocusedContent => "",
+            }
+        }
+    }
+
+    impl PartialEq for OcrState {
+        fn eq(&self, other: &Self) -> bool {
+            self.state == other.state
+        }
+    }
+
+    pub enum OcrAction {
+        Focus,
+        Unfocus,
+        Editable(bool),
+        EditContent,
+    }
+
+    impl Reducible for OcrState {
+        type Action = OcrAction;
+        fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
+            match action {
+                OcrAction::Focus => {
+                    let state = self.state.focus();
+                    if state == TBS::EditableFocused { focus(&self.ref_); }
+                    Self { ref_: self.ref_.clone(), state }
+                }
+                OcrAction::Unfocus => {
+                    get_selection().and_then(|s| s.empty().ok());
+                    let state = self.state.unfocus();
+                    Self { ref_: self.ref_.clone(), state }
+                }
+                OcrAction::Editable(editable) => {
+                    let state = if self.state.editable() != editable {
+                        TextBlockState::from_editable(editable)
+                    } else { self.state };
+                    Self { ref_: self.ref_.clone(), state }
+                }
+                OcrAction::EditContent => {
+                    let state = self.state.to_content_editable();
+                    if state == TextBlockState::EditableFocusedContent {
+                        get_selection().and_then(|s| s.empty().ok());
+                        focus(&self.ref_);
+                    }
+                    Self { ref_: self.ref_.clone(), state }
+                }
+            }.into()
+        }
+    }
+}
 
 mod page {
     use std::rc::Rc;
