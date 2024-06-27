@@ -1,9 +1,4 @@
-pub use cursor::{CursorAction, use_cursor};
-pub use ocr::{OcrAction, use_ocr_reducer};
-pub use page::{PageAction, use_page_reducer};
-pub use volume::{use_volume_reducer, VolumeAction};
-
-mod ocr {
+pub mod ocr {
     use std::fmt::{Display, Formatter};
     use std::rc::Rc;
 
@@ -94,7 +89,12 @@ mod ocr {
         }
 
         pub fn outline(&self) -> &str {
-            if self.state.editable() { "outline: 1.5px solid red;" } else { "" }
+            match self.state {
+                TextBlockState::Editable => "outline: 1.5px solid red;",
+                TextBlockState::EditableFocused | TextBlockState::EditableFocusedContent
+                => "outline: 1.5px solid #dd3300; box-shadow: 0 0 0 3px #aa6600;",
+                TextBlockState::Default => "",
+            }
         }
 
         pub fn user_select(&self) -> &str {
@@ -151,7 +151,7 @@ mod ocr {
     }
 }
 
-mod page {
+pub mod page {
     use std::rc::Rc;
 
     use rexie::Rexie;
@@ -228,6 +228,7 @@ mod page {
 
     pub enum PageAction {
         Set((u32, AttrValue, PageImage, PageOcr)),
+        DeleteBlock(AttrValue),
         UpdateBlock(OcrBlock),
     }
 
@@ -240,6 +241,19 @@ mod page {
                     let object = gloo_file::ObjectUrl::from(image);
                     let url = AttrValue::from(object.to_string());
                     Self { _object: Some(object), _key: (id, name), ocr, url }
+                }
+                Self::Action::DeleteBlock(uuid) => {
+                    gloo_console::log!("deleting block");
+                    let mut ocr = self.ocr.clone();
+                    let index =
+                        ocr.blocks.iter().position(|b| b.uuid == uuid).unwrap();
+                    ocr.blocks.remove(index);
+                    Self {
+                        _object: self._object.clone(),
+                        _key: self._key.clone(),
+                        ocr,
+                        url: self.url.clone(),
+                    }
                 }
                 Self::Action::UpdateBlock(block) => {
                     gloo_console::log!("updating block");
@@ -259,7 +273,7 @@ mod page {
     }
 }
 
-mod volume {
+pub mod volume {
     use std::rc::Rc;
 
     use rexie::Rexie;
@@ -336,7 +350,7 @@ mod volume {
     }
 }
 
-mod cursor {
+pub mod cursor {
     use std::rc::Rc;
 
     use web_sys::MouseEvent;

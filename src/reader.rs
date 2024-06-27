@@ -12,7 +12,12 @@ use yew_autoprops::autoprops;
 use yew_hooks::{use_event_with_window, use_toggle};
 
 use crate::models::{MagnifierSettings, OcrBlock};
-use crate::utils::hooks::{CursorAction, OcrAction, PageAction, use_cursor, use_ocr_reducer, use_page_reducer, use_volume_reducer, VolumeAction};
+use crate::utils::hooks::{
+    cursor::{CursorAction, use_cursor},
+    ocr::{OcrAction, TextBlockState, use_ocr_reducer},
+    page::{PageAction, use_page_reducer},
+    volume::{use_volume_reducer, VolumeAction},
+};
 use crate::utils::web::{get_screen_size, get_selection};
 
 #[autoprops]
@@ -148,22 +153,28 @@ fn reader_page(
     let reducer = use_page_reducer(db.clone(), volume_id, name)?;
     let signal = reducer.dispatcher();
 
-    let update_db = Callback::from(enclose!((signal)
+    let update_db = &Callback::from(enclose!((signal)
         move |b: Option<OcrBlock>| {
             if let Some(b) = b { signal.dispatch(PageAction::UpdateBlock(b)); }
         }
     ));
+    let delete = enclose!((signal) &Callback::from(
+        move |uuid: AttrValue| signal.dispatch(PageAction::DeleteBlock(uuid))
+    ));
     // gloo_console::log!("rerender", name.as_str());
 
     let rect = *rect;
+    let draggable = Some("false");
     let src = &reducer.url;
     let scale = rect.scale(reducer.ocr.img_height);
     Ok(html! {
         <>
-        <img ref={img_ref} class="reader-image" {src} {onload}/>
+        <img ref={img_ref} class="reader-image" {draggable} {src} {onload}/>
         {
             reducer.ocr.blocks.iter().map(|block| {
-                html!{<OcrTextBox {editable} {rect} {scale} block={block.clone()} update_db={&update_db}/>}
+                let key = block.uuid.as_str();
+                let block = block.clone();
+                html!{<OcrTextBox {key} {editable} {rect} {scale} {block} {delete} {update_db}/>}
             }).collect::<Html>()
         }
         </>
@@ -188,6 +199,7 @@ fn ocr_text_block(
     rect: &Rect,
     scale: f64,
     block: &OcrBlock,
+    delete: Callback<AttrValue>,
     update_db: &Callback<Option<OcrBlock>>,
 ) -> Html {
     let state = use_ocr_reducer(editable);
@@ -235,6 +247,19 @@ fn ocr_text_block(
         Callback::from(move |_| signal.dispatch(OcrAction::EditContent))
     );
 
+    let onkeydown = enclose!((state, block.uuid => uuid)
+        Callback::from(move |e: KeyboardEvent| {
+            if state.state == TextBlockState::EditableFocused {
+                if e.code() == "Backspace" {
+                    let prompt = "Are you sure you want to delete this?\nThere is no undo!";
+                    if gloo_dialogs::confirm(prompt) {
+                        delete.emit(uuid.clone())
+                    }
+                }
+            }
+        }
+    ));
+
     let remove_newlines = use_memo((), |_|
     Callback::from(move |e: Event| {
         let e = e.dyn_into::<ClipboardEvent>()
@@ -262,7 +287,7 @@ fn ocr_text_block(
         <div
           ref={&state.ref_} {key} class={"ocr-block"}
           {contenteditable} {draggable} {style} tabindex={"-1"}
-          {onblur} {onclick} {oncopy} {ondblclick} {onfocus} {onkeypress}>
+          {onblur} {onclick} {oncopy} {ondblclick} {onfocus} {onkeydown} {onkeypress}>
             {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
         </div>
     }
