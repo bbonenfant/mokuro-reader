@@ -1,3 +1,63 @@
+pub mod cursor {
+    use std::rc::Rc;
+
+    use web_sys::MouseEvent;
+    use yew::{hook, Reducible, use_reducer_eq, UseReducerDispatcher, UseReducerHandle};
+
+    use crate::utils::timestamp;
+
+    /// Helpful encapsulation of all the information and functionality
+    /// that this app needs involving the Cursor.
+    #[hook]
+    pub fn use_cursor() -> (UseReducerHandle<Cursor>, UseReducerDispatcher<Cursor>) {
+        let reducer = use_reducer_eq(Cursor::default);
+        let dispatcher = reducer.dispatcher();
+        (reducer, dispatcher)
+    }
+
+    #[derive(Default)]
+    pub struct Cursor {
+        pub magnify: bool,
+        pub force: u64,
+        pub position: (i32, i32),
+    }
+
+    impl PartialEq for Cursor {
+        fn eq(&self, other: &Self) -> bool {
+            self.magnify == other.magnify && self.force == other.force
+        }
+    }
+
+    pub enum CursorAction {
+        ForceRerender,
+        Toggle,
+        Update(MouseEvent),
+    }
+
+    impl Reducible for Cursor {
+        type Action = CursorAction;
+        fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
+            match action {
+                Self::Action::ForceRerender => Self {
+                    magnify: self.magnify,
+                    force: timestamp(),
+                    position: self.position,
+                },
+                Self::Action::Toggle => Self {
+                    magnify: !self.magnify,
+                    force: self.force,
+                    position: self.position,
+                },
+                Self::Action::Update(event) => {
+                    let position = (event.page_x(), event.page_y());
+                    let force = if self.magnify { timestamp() } else { self.force };
+                    Self { magnify: self.magnify, force, position }
+                }
+            }.into()
+        }
+    }
+}
+
 pub mod ocr {
     use std::fmt::{Display, Formatter};
     use std::rc::Rc;
@@ -350,62 +410,3 @@ pub mod volume {
     }
 }
 
-pub mod cursor {
-    use std::rc::Rc;
-
-    use web_sys::MouseEvent;
-    use yew::{hook, Reducible, use_reducer_eq, UseReducerDispatcher, UseReducerHandle};
-
-    use crate::utils::timestamp;
-
-    /// Helpful encapsulation of all the information and functionality
-    /// that this app needs involving the Cursor.
-    #[hook]
-    pub fn use_cursor() -> (UseReducerHandle<Cursor>, UseReducerDispatcher<Cursor>) {
-        let reducer = use_reducer_eq(Cursor::default);
-        let dispatcher = reducer.dispatcher();
-        (reducer, dispatcher)
-    }
-
-    #[derive(Default)]
-    pub struct Cursor {
-        pub magnify: bool,
-        pub force: u64,
-        pub position: (i32, i32),
-    }
-
-    impl PartialEq for Cursor {
-        fn eq(&self, other: &Self) -> bool {
-            self.magnify == other.magnify && self.force == other.force
-        }
-    }
-
-    pub enum CursorAction {
-        ForceRerender,
-        Toggle,
-        Update(MouseEvent),
-    }
-
-    impl Reducible for Cursor {
-        type Action = CursorAction;
-        fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
-            match action {
-                Self::Action::ForceRerender => Self {
-                    magnify: self.magnify,
-                    force: timestamp(),
-                    position: self.position,
-                },
-                Self::Action::Toggle => Self {
-                    magnify: !self.magnify,
-                    force: self.force,
-                    position: self.position,
-                },
-                Self::Action::Update(event) => {
-                    let position = (event.page_x(), event.page_y());
-                    let force = if self.magnify { timestamp() } else { self.force };
-                    Self { magnify: self.magnify, force, position }
-                }
-            }.into()
-        }
-    }
-}
