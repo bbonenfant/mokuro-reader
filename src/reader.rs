@@ -5,20 +5,21 @@ use enclose::enclose;
 use rexie::Rexie;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
-use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, NodeRef};
-use yew::functional::{use_effect, use_memo, use_mut_ref, use_node_ref, use_state};
+use yew::{AttrValue, Callback, classes, function_component, html, Html, HtmlResult, NodeRef};
+use yew::functional::{use_effect, use_memo, use_mut_ref, use_node_ref, use_state_eq};
 use yew::suspense::Suspense;
 use yew_autoprops::autoprops;
 use yew_hooks::{use_event_with_window, use_toggle};
 
 use crate::models::{MagnifierSettings, OcrBlock};
+pub use crate::reader::window::{BoundingBox, Rect, WindowState};
 use crate::utils::hooks::{
     cursor::{CursorAction, use_cursor},
     ocr::{OcrAction, TextBlockState, use_ocr_reducer},
     page::{PageAction, use_page_reducer},
     volume::{use_volume_reducer, VolumeAction},
 };
-use crate::utils::web::{get_screen_size, get_selection};
+use crate::utils::web::get_selection;
 
 #[autoprops]
 #[function_component(Reader)]
@@ -29,8 +30,9 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     // State
     let (cursor, c_signal) = use_cursor();
     let editable = use_toggle(false, true);
+    let fallback = use_mut_ref(yew::virtual_dom::VNode::default);
     let (reader, left, right) = (use_node_ref(), use_node_ref(), use_node_ref());
-    let window = use_state(WindowState::default);
+    let window = use_state_eq(WindowState::default);
 
     let (right_page, left_page) =
         volume.data.reader_state.select_pages(&volume.data.pages);
@@ -40,8 +42,10 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     //  without needing to click the page.
     { // For some reason, using enclose! here causes use_effect to not fire.
         let ref_ = reader.clone();
+        let fallback = fallback.clone();
         use_effect(move || {
             let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
+            move || *fallback.borrow_mut() = generate_suspense_fallback(&ref_)
         })
     }
 
@@ -58,10 +62,9 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     // Hook into resize event of the window.
     // We need to keep track of the size of the page images.
     use_event_with_window("resize", enclose!((left, right, window) move |_: Event| {
-        let screen = Screen::new();
-        let left = Rect::try_from(&left).unwrap_or(window.left);
-        let right = Rect::try_from(&right).unwrap_or(window.right);
-        window.set(WindowState { screen, left, right })
+        let left = Rect::try_from(&left).unwrap_or(window.left.rect);
+        let right = Rect::try_from(&right).unwrap_or(window.right.rect);
+        window.set(WindowState::new(left, right))
     }));
 
     // Track cursor movements. This needed for the magnifier.
@@ -69,21 +72,21 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
         Callback::from(move |e| { c_signal.dispatch(CursorAction::Update(e)) })
     }));
 
-    let fallback = use_mut_ref(yew::virtual_dom::VNode::default);
     // This callback is intended for when the images finish loading.
     // This registers the size of the page images and then force re-renders
     // the magnifier component. The force re-render is necessary to update
     // the background images, allowing the effect to seamlessly work across pages.
-    let on_image_load = use_memo((), enclose!((c_signal, fallback, left, right, window) |_|
+    let on_image_load = use_memo((), enclose!((c_signal, fallback, left, right, reader, window) |_|
         Callback::from(move |_: Event| {
             // Set a fallback for the ReaderPage Suspense.
             // This will prevent the images from flashing on rerender.
-            *fallback.borrow_mut() = generate_suspense_fallback(&left, &right);
+            *fallback.borrow_mut() = generate_suspense_fallback(&reader);
+            gloo_console::log!(format!("{:?}", *fallback.borrow()));
 
             c_signal.dispatch(CursorAction::ForceRerender);
-            let left = Rect::try_from(&left).unwrap_or(window.left);
-            let right = Rect::try_from(&right).unwrap_or(window.right);
-            window.set(WindowState { screen: window.screen, left, right });
+            let left = Rect::try_from(&left).unwrap_or(window.left.rect);
+            let right = Rect::try_from(&right).unwrap_or(window.right.rect);
+            window.set(WindowState::new(left, right))
         })
     ));
 
@@ -105,15 +108,17 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     let onkeypress = handle_keypress.as_ref();
     let onload = on_image_load.as_ref();
     let onmousemove = update_cursor.as_ref();
+
+    let class = classes!(editable.then(||Some("editable")));
     Ok(html! {
-        <div ref={reader} id="Reader" tabindex="0" {oncontextmenu} {onkeypress} {onmousemove}>
+        <div ref={reader} id="Reader" {class} tabindex="0" {oncontextmenu} {onkeypress} {onmousemove}>
             if show_magnifier { <Magnifier {cursor} {settings} {left} {right} {force}/> }
-            <Suspense fallback={fallback}>
+            <Suspense>
             if let Some(name) = left_page {
-                <ReaderPage {db} {volume_id} {name} img_ref={left} rect={window.left} {editable} {onload}/>
+                <ReaderPage {db} {volume_id} {name} img_ref={left} bbox={window.left} {editable} {onload} />
             }
             if let Some(name) = right_page {
-                <ReaderPage {db} {volume_id} {name} img_ref={right} rect={window.right} {editable} {onload}/>
+                <ReaderPage {db} {volume_id} {name} img_ref={right} bbox={window.right} {editable} {onload} />
             }
             </Suspense>
         </div>
@@ -146,7 +151,7 @@ fn reader_page(
     volume_id: u32,
     name: AttrValue,
     img_ref: &NodeRef,
-    rect: &Rect,
+    bbox: &BoundingBox,
     editable: bool,
     onload: Callback<Event>,
 ) -> HtmlResult {
@@ -163,10 +168,10 @@ fn reader_page(
     ));
     // gloo_console::log!("rerender", name.as_str());
 
-    let rect = *rect;
+    let bbox = *bbox;
     let draggable = Some("false");
     let src = &reducer.url;
-    let scale = rect.scale(reducer.ocr.img_height);
+    let scale = (reducer.ocr.img_height as f64) / bbox.rect.height;
     Ok(html! {
         <>
         <img ref={img_ref} class="reader-image" {draggable} {src} {onload}/>
@@ -174,19 +179,16 @@ fn reader_page(
             reducer.ocr.blocks.iter().map(|block| {
                 let key = block.uuid.as_str();
                 let block = block.clone();
-                html!{<OcrTextBox {key} {editable} {rect} {scale} {block} {delete} {update_db}/>}
+                html!{<OcrTextBox {key} {editable} {bbox} {scale} {block} {delete} {update_db}/>}
             }).collect::<Html>()
         }
         </>
     })
 }
 
-fn generate_suspense_fallback(left: &NodeRef, right: &NodeRef) -> Html {
+fn generate_suspense_fallback(node: &NodeRef) -> Html {
     html! {<>
-        if let Some(elm) = left.cast::<web_sys::Element>() {
-            {Html::from_html_unchecked(elm.outer_html().into())}
-        }
-        if let Some(elm) = right.cast::<web_sys::Element>() {
+        if let Some(elm) = node.cast::<web_sys::Element>() {
             {Html::from_html_unchecked(elm.outer_html().into())}
         }
     </>}
@@ -196,7 +198,7 @@ fn generate_suspense_fallback(left: &NodeRef, right: &NodeRef) -> Html {
 #[function_component(OcrTextBox)]
 fn ocr_text_block(
     editable: bool,
-    rect: &Rect,
+    bbox: &BoundingBox,
     scale: f64,
     block: &OcrBlock,
     delete: Callback<AttrValue>,
@@ -204,20 +206,7 @@ fn ocr_text_block(
 ) -> Html {
     let state = use_ocr_reducer(editable);
     let signal = state.dispatcher();
-
-    let top = rect.top + ((block.box_.1 as f64) / scale);
-    let left = rect.left + ((block.box_.0 as f64) / scale);
-    let height = ((block.box_.3 - block.box_.1) as f64) / scale;
-    let width = ((block.box_.2 - block.box_.0) as f64) / scale;
-    let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
-    let font = (block.font_size as f64) / scale;
-    let (cursor, outline, user_select) = (state.cursor(), state.outline(), state.user_select());
-    let style = format!(
-        "top: {top:.2}px; left: {left:.2}px; \
-         min-height: {height:.2}px; min-width: {width:.2}px; \
-         font-size: {font:.1}px; writing-mode: {mode}; \
-         {cursor} {outline} {user_select}"
-    );
+    let style = state.style(&block, &bbox, scale);
 
     let onblur = enclose!((block, state) update_db.reform(move |e: FocusEvent| {
         state.dispatch(OcrAction::Unfocus); // maybe problematic to have it here
@@ -260,6 +249,26 @@ fn ocr_text_block(
         }
     ));
 
+    let onmouseup = enclose!((bbox, block, state.ref_ => node) update_db.reform(move |_| {
+        let element = node.cast::<web_sys::Element>()
+                .expect_throw("could not resolve node reference");
+        let rect = element.get_bounding_client_rect();
+
+        let left = ((rect.left() - bbox.rect.left) * scale).round();
+        let right = (rect.width() * scale).round() + left;
+        let top = ((rect.top() - bbox.rect.top) * scale).round();
+        let bottom = (rect.height() * scale).round() + top;
+        let box_ = (left as u32, top as u32, right as u32, bottom as u32);
+        if box_ == block.box_ { return None; }
+        Some(OcrBlock {
+            uuid: block.uuid.clone(),
+            box_,
+            vertical: block.vertical,
+            font_size: block.font_size,
+            lines: block.lines.clone(),
+        })
+    }));
+
     let remove_newlines = use_memo((), |_|
     Callback::from(move |e: Event| {
         let e = e.dyn_into::<ClipboardEvent>()
@@ -287,7 +296,8 @@ fn ocr_text_block(
         <div
           ref={&state.ref_} {key} class={"ocr-block"}
           {contenteditable} {draggable} {style} tabindex={"-1"}
-          {onblur} {onclick} {oncopy} {ondblclick} {onfocus} {onkeydown} {onkeypress}>
+          {onblur} {onclick} {oncopy} {ondblclick} {onfocus}
+          {onkeydown} {onkeypress} {onmouseup}>
             {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
         </div>
     }
@@ -407,73 +417,77 @@ impl MagnifierStyle {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
-struct Screen {
-    width: u32,
-    height: u32,
-}
 
-impl Screen {
-    fn new() -> Self {
-        let (width, height) = get_screen_size();
-        Self { width, height }
+mod window {
+    use yew::NodeRef;
+
+    use crate::utils::web::get_screen_size;
+
+    #[derive(Copy, Clone, Default, PartialEq)]
+    pub struct WindowState {
+        pub screen: Screen,
+        pub left: BoundingBox,
+        pub right: BoundingBox,
     }
-}
 
-impl Default for Screen {
-    fn default() -> Self {
-        let (width, height) = get_screen_size();
-        Self { width, height }
-    }
-}
-
-impl Display for Screen {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Screen({}px, {}px)", self.width, self.height)
-    }
-}
-
-#[derive(Copy, Clone, Default, PartialEq)]
-struct Rect {
-    top: f64,
-    left: f64,
-    bottom: f64,
-    right: f64,
-    height: f64,
-    width: f64,
-}
-
-impl Rect {
-    fn scale(&self, height: u32) -> f64 {
-        (height as f64) / self.height
-    }
-}
-
-impl From<web_sys::DomRect> for Rect {
-    fn from(value: web_sys::DomRect) -> Self {
-        Self {
-            top: value.top(),
-            left: value.left(),
-            bottom: value.bottom(),
-            right: value.right(),
-            height: value.height(),
-            width: value.width(),
+    impl WindowState {
+        pub fn new(left: Rect, right: Rect) -> Self {
+            let screen = Screen::default();
+            let left = BoundingBox { rect: left, screen: screen.clone() };
+            let right = BoundingBox { rect: right, screen: screen.clone() };
+            Self { screen, left, right }
         }
     }
-}
 
-impl TryFrom<&NodeRef> for Rect {
-    type Error = ();
-    fn try_from(value: &NodeRef) -> Result<Self, Self::Error> {
-        value.cast::<web_sys::Element>().map(|element| {
-            element.get_bounding_client_rect().into()
-        }).ok_or(())
+    #[derive(Copy, Clone, Default, PartialEq)]
+    pub struct BoundingBox {
+        pub rect: Rect,
+        pub screen: Screen,
     }
-}
 
-#[derive(Copy, Clone, Default)]
-struct WindowState {
-    screen: Screen,
-    left: Rect,
-    right: Rect,
+
+    #[derive(Copy, Clone, PartialEq)]
+    pub struct Screen {
+        pub width: f64,
+        pub height: f64,
+    }
+
+    impl Default for Screen {
+        fn default() -> Self {
+            let (width, height) = get_screen_size();
+            Self { width, height }
+        }
+    }
+
+    #[derive(Copy, Clone, Default, PartialEq)]
+    pub struct Rect {
+        pub top: f64,
+        pub left: f64,
+        pub bottom: f64,
+        pub right: f64,
+        pub height: f64,
+        pub width: f64,
+    }
+
+    impl From<web_sys::DomRect> for Rect {
+        fn from(value: web_sys::DomRect) -> Self {
+            Self {
+                top: value.top(),
+                left: value.left(),
+                bottom: value.bottom(),
+                right: value.right(),
+                height: value.height(),
+                width: value.width(),
+            }
+        }
+    }
+
+    impl TryFrom<&NodeRef> for Rect {
+        type Error = ();
+        fn try_from(value: &NodeRef) -> Result<Self, Self::Error> {
+            value.cast::<web_sys::Element>().map(|element| {
+                element.get_bounding_client_rect().into()
+            }).ok_or(())
+        }
+    }
 }

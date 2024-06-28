@@ -65,6 +65,8 @@ pub mod ocr {
     use yew::{NodeRef, Reducible, UseReducerHandle};
     use yew::functional::{hook, use_node_ref, use_reducer_eq};
 
+    use crate::models::OcrBlock;
+    use crate::reader::BoundingBox;
     use crate::utils::web::{focus, get_selection};
 
     #[hook]
@@ -133,6 +135,10 @@ pub mod ocr {
             self.state.editable()
         }
 
+        pub fn focused(&self) -> bool {
+            matches!(self.state, TBS::EditableFocused | TBS::EditableFocusedContent)
+        }
+
         pub fn contenteditable(&self) -> Option<&'static str> {
             if self.state == TBS::EditableFocusedContent {
                 return Some("true");
@@ -140,28 +146,33 @@ pub mod ocr {
             None
         }
 
-        pub fn cursor(&self) -> &str {
-            match self.state {
-                TBS::Default | TBS::EditableFocusedContent => "",
-                TBS::Editable => "cursor: pointer;",
-                TBS::EditableFocused => "cursor: move;"
-            }
-        }
+        pub fn style(&self, block: &OcrBlock, img: &BoundingBox, scale: f64) -> String {
+            let mut s = String::new();
 
-        pub fn outline(&self) -> &str {
-            match self.state {
-                TextBlockState::Editable => "outline: 1.5px solid red;",
-                TextBlockState::EditableFocused | TextBlockState::EditableFocusedContent
-                => "outline: 1.5px solid #dd3300; box-shadow: 0 0 0 3px #aa6600;",
-                TextBlockState::Default => "",
-            }
-        }
+            let top = img.rect.top + ((block.box_.1 as f64) / scale);
+            let left = img.rect.left + ((block.box_.0 as f64) / scale);
+            let height = ((block.box_.3 - block.box_.1) as f64) / scale;
+            let width = ((block.box_.2 - block.box_.0) as f64) / scale;
 
-        pub fn user_select(&self) -> &str {
-            match self.state {
-                TBS::Editable | TBS::EditableFocused => "user-select: none;",
-                TBS::Default | TBS::EditableFocusedContent => "",
-            }
+            if block.vertical {
+                let right = img.screen.width - left - width;
+                s.push_str(&format!("top: {top:.2}px; right: {right:.2}px; "));
+            } else {
+                s.push_str(&format!("top: {top:.2}px; left: {left:.2}px; "));
+            };
+
+            let max_height = (img.rect.height + img.rect.top - top).floor();
+            let max_width = (img.rect.width + img.rect.left - left).floor();
+            s.push_str(&format!(
+                "height: {height:.2}px; width: {width:.2}px; \
+                 max-height: {max_height}px; max-width: {max_width}px; "
+            ));
+
+            let font = (block.font_size as f64) / scale;
+            let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
+            s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
+
+            return s;
         }
     }
 
@@ -181,10 +192,9 @@ pub mod ocr {
     impl Reducible for OcrState {
         type Action = OcrAction;
         fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
-            match action {
+            let state = match action {
                 OcrAction::Focus => {
                     let state = self.state.focus();
-                    if state == TBS::EditableFocused { focus(&self.ref_); }
                     Self { ref_: self.ref_.clone(), state }
                 }
                 OcrAction::Unfocus => {
@@ -202,11 +212,12 @@ pub mod ocr {
                     let state = self.state.to_content_editable();
                     if state == TextBlockState::EditableFocusedContent {
                         get_selection().and_then(|s| s.empty().ok());
-                        focus(&self.ref_);
                     }
                     Self { ref_: self.ref_.clone(), state }
                 }
-            }.into()
+            };
+            if state.focused() { focus(&self.ref_); }
+            state.into()
         }
     }
 }

@@ -168,6 +168,27 @@ input#file-upload {
             max-width: 100%;
         }
     }
+
+    &.editable .ocr-block {
+        background-color: lightgray;
+
+        &[contenteditable="true"] {
+            outline: 2px solid red;
+        }
+
+        &:not([contenteditable="true"]) {
+            cursor: pointer;
+            outline: 1px solid darkgray;
+            user-select: none;
+
+            &:focus {
+                cursor: move;
+                outline: 2px solid red;
+                overflow: hidden;
+                resize: both;
+            }
+        }
+    }
 }
 
 
@@ -181,7 +202,8 @@ input#file-upload {
 .ocr-block {
     position: absolute;
     color: black;
-    resize: both;
+    /*overflow: hidden;*/
+    /*resize: both;*/
 
     > p {
         background-color: white;
@@ -189,6 +211,7 @@ input#file-upload {
         margin: 0;
         opacity: 0;
         padding-inline: 2px;
+        white-space: nowrap;
     }
 
     &:hover > p, &:focus > p {
