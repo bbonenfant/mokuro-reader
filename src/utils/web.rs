@@ -36,3 +36,11 @@ pub fn focus(node: &yew::NodeRef) -> bool {
         .expect_throw("Could not resolve node reference")
         .focus().is_ok()
 }
+
+pub fn is_focused(node: &yew::NodeRef) -> bool {
+    let document = window().document()
+        .expect_throw("Can't find the global Document");
+    let element = node.cast::<web_sys::Element>()
+        .expect_throw("Could not resolve node reference");
+    document.active_element().is_some_and(|elm| elm == element)
+}

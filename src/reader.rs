@@ -2,11 +2,10 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
 use enclose::enclose;
-use gloo_console::console_dbg;
 use rexie::Rexie;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
-use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
-use yew::{AttrValue, Callback, classes, function_component, html, Html, HtmlResult, NodeRef};
+use web_sys::{Event, KeyboardEvent, MouseEvent};
+use yew::{AttrValue, Callback, classes, Component, function_component, html, Html, HtmlResult, NodeRef, Properties};
 use yew::functional::{use_effect, use_memo, use_mut_ref, use_node_ref, use_state_eq};
 use yew::suspense::Suspense;
 use yew_autoprops::autoprops;
@@ -15,12 +14,11 @@ use yew_hooks::{use_event_with_window, use_toggle};
 use crate::models::{MagnifierSettings, OcrBlock};
 pub use crate::reader::window::{BoundingBox, Rect, WindowState};
 use crate::utils::hooks::{
-    cursor::{CursorAction, use_cursor},
-    ocr::{OcrAction, TextBlockState, use_ocr_reducer},
+    cursor::{CursorAction, use_cursor}
+    ,
     page::{PageAction, use_page_reducer},
     volume::{use_volume_reducer, VolumeAction},
 };
-use crate::utils::web::get_selection;
 
 #[autoprops]
 #[function_component(Reader)]
@@ -46,7 +44,7 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
         let fallback = fallback.clone();
         use_effect(move || {
             let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
-            move || *fallback.borrow_mut() = generate_suspense_fallback(&ref_);
+            move || *fallback.borrow_mut() = generate_suspense_fallback(&ref_)
         })
     }
 
@@ -158,12 +156,12 @@ fn reader_page(
     let reducer = use_page_reducer(db.clone(), volume_id, name)?;
     let signal = reducer.dispatcher();
 
-    let update_db = &Callback::from(enclose!((signal)
+    let commit_block = &Callback::from(enclose!((signal)
         move |b: Option<OcrBlock>| {
             if let Some(b) = b { signal.dispatch(PageAction::UpdateBlock(b)); }
         }
     ));
-    let delete = enclose!((signal) &Callback::from(
+    let delete_block = enclose!((signal) Callback::from(
         move |uuid: AttrValue| signal.dispatch(PageAction::DeleteBlock(uuid))
     ));
     // gloo_console::log!("rerender", name.as_str());
@@ -177,9 +175,21 @@ fn reader_page(
         <img ref={img_ref} class="reader-image" {draggable} {src} {onload}/>
         {
             reducer.ocr.blocks.iter().map(|block| {
+                let backspace_delete = {
+                    let delete_block = delete_block.clone();
+                    let uuid = block.uuid.clone();
+                    Callback::from(move |e: KeyboardEvent| {
+                        if e.code() == "Backspace" {
+                            let prompt = "Are you sure you want to delete this?\nThere is no undo!";
+                            if gloo_dialogs::confirm(prompt) {
+                                delete_block.emit(uuid.clone())
+                            }
+                        }
+                    })
+                };
                 let key = block.uuid.as_str();
                 let block = block.clone();
-                html!{<OcrTextBox {key} {editable} {bbox} {scale} {block} {delete} {update_db}/>}
+                html!{<ocr::OcrTextBlock {key} mutable={editable} {bbox} {scale} {block} {commit_block} {backspace_delete}/>}
             }).collect::<Html>()
         }
         </>
@@ -200,194 +210,301 @@ fn generate_suspense_fallback(node: &NodeRef) -> Html {
     Html::default()
 }
 
-#[autoprops]
-#[function_component(OcrTextBox)]
-fn ocr_text_block(
-    editable: bool,
-    bbox: &BoundingBox,
-    scale: f64,
-    block: &OcrBlock,
-    delete: Callback<AttrValue>,
-    update_db: &Callback<Option<OcrBlock>>,
-) -> Html {
-    let state = use_ocr_reducer(editable);
-    let signal = state.dispatcher();
+mod ocr {
+    use wasm_bindgen::{JsCast, UnwrapThrowExt};
+    use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
+    use yew::{AttrValue, Callback, Component, Context, Html, html, NodeRef, Properties};
+    use yew::html::Scope;
 
-    let drag = use_state_eq(|| None);
+    use drag::Drag;
 
-    let style = {
-        let mut s = String::new();
+    use crate::models::OcrBlock;
+    use crate::reader::BoundingBox;
+    use crate::utils::web::get_selection;
 
-        let dx = drag.as_ref().map_or(0, |d: &Drag| d.delta_x()) as f64;
-        let dy = drag.as_ref().map_or(0, |d: &Drag| d.delta_y()) as f64;
+    #[derive(Properties, PartialEq)]
+    pub struct Props {
+        pub bbox: BoundingBox,
+        pub block: OcrBlock,
+        pub mutable: bool,
+        pub scale: f64,
 
-        let top = bbox.rect.top + ((block.box_.1 as f64) / scale) + dy;
-        let left = bbox.rect.left + ((block.box_.0 as f64) / scale) + dx;
-        let height = ((block.box_.3 - block.box_.1) as f64) / scale;
-        let width = ((block.box_.2 - block.box_.0) as f64) / scale;
+        pub backspace_delete: Callback<KeyboardEvent>,
+        pub commit_block: Callback<Option<OcrBlock>>,
+    }
 
-        if block.vertical {
-            let right = bbox.screen.width - left - width;
-            s.push_str(&format!("top: {top:.2}px; right: {right:.2}px; "));
-        } else {
-            s.push_str(&format!("top: {top:.2}px; left: {left:.2}px; "));
-        };
+    pub enum TextBlockMessage {
+        RemoveFocus,
+        EnableContentEditing,
+        BeginDrag(i32, i32),
+        UpdateDrag(i32, i32),
+        EndDrag,
+    }
 
-        let max_height = (bbox.rect.height + bbox.rect.top - top).floor();
-        let max_width = (bbox.rect.width + bbox.rect.left - left).floor();
-        s.push_str(&format!(
-            "height: {height:.2}px; width: {width:.2}px; \
-             max-height: {max_height}px; max-width: {max_width}px; "
-        ));
+    pub struct OcrTextBlock {
+        contenteditable: bool,
+        drag: Option<Drag>,
+        node_ref: NodeRef,
+        should_be_focused: bool,
 
-        let font = (block.font_size as f64) / scale;
-        let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
-        s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
-        s
-    };
+        begin_drag: Callback<MouseEvent>,
+        commit_lines: Callback<FocusEvent>,
+        ondblclick: Callback<MouseEvent>,
+        oncopy: Callback<Event>,
+        onmouseleave: Callback<MouseEvent>,
+        onmousemove: Callback<MouseEvent>,
+    }
 
-    let onblur = enclose!((block, state) update_db.reform(move |e: FocusEvent| {
-        state.dispatch(OcrAction::Unfocus); // maybe problematic to have it here
-        if state.contenteditable().is_some() {
-            let target = e.target().unwrap();
-            let div = target.dyn_ref::<web_sys::HtmlElement>().unwrap();
-            let children = div.children();
-            let mut lines = vec![];
-            for index in 0..children.length() {
-                let child = children.item(index).unwrap();
-                if let Some(text) = child.text_content() {
-                    lines.push(AttrValue::from(text))
-                }
-            }
-            if lines != block.lines {
-                return Some(OcrBlock { lines, uuid: block.uuid.clone(), ..block })
-            }
-        }
-        None
-    }));
+    impl Component for OcrTextBlock {
+        type Properties = Props;
+        type Message = TextBlockMessage;
+        fn create(ctx: &Context<Self>) -> Self {
+            let Props { block, commit_block, .. } = ctx.props();
 
-    // let onclick = enclose!((signal)
-    //     Callback::from(move |_| signal.dispatch(OcrAction::Focus))
-    // );
-
-    let ondblclick = enclose!((signal)
-        Callback::from(move |_| signal.dispatch(OcrAction::EditContent))
-    );
-
-    let onkeydown = enclose!((state, block.uuid => uuid)
-        Callback::from(move |e: KeyboardEvent| {
-            if state.state == TextBlockState::EditableFocused {
-                if e.code() == "Backspace" {
-                    let prompt = "Are you sure you want to delete this?\nThere is no undo!";
-                    if gloo_dialogs::confirm(prompt) {
-                        delete.emit(uuid.clone())
+            let commit_lines = {
+                let block = block.clone();
+                let commit = commit_block.clone();
+                let link = ctx.link().clone();
+                commit.reform(Self::new_commit_lines(link, block))
+            };
+            let ondblclick =
+                ctx.link().callback(|_: MouseEvent| Self::Message::EnableContentEditing);
+            let oncopy = Callback::from(|e: Event| {
+                let e = e.dyn_into::<ClipboardEvent>()
+                    .expect_throw("couldn't convert to ClipboardEvent");
+                let selection = get_selection().and_then(|s| s.to_string().as_string());
+                if let Some(text) = selection {
+                    if let Some(clipboard) = e.clipboard_data() {
+                        clipboard.set_data("text/plain", &text.replace('\n', ""))
+                            .expect("couldn't write to clipboard");
+                        e.prevent_default();
                     }
                 }
+            });
+            let onmouseleave =
+                ctx.link().callback(|_: MouseEvent| Self::Message::EndDrag);
+            let onmousemove = ctx.link().callback(|e: MouseEvent| {
+                Self::Message::UpdateDrag(e.client_x(), e.client_y())
+            });
+            let begin_drag = ctx.link().callback(|e: MouseEvent| {
+                Self::Message::BeginDrag(e.client_x(), e.client_y())
+            });
+
+            Self {
+                contenteditable: false,
+                drag: None,
+                node_ref: NodeRef::default(),
+                should_be_focused: false,
+                begin_drag,
+                commit_lines,
+                ondblclick,
+                oncopy,
+                onmouseleave,
+                onmousemove,
             }
         }
-    ));
 
-    let onmouseup = enclose!((bbox, block, drag, state.ref_ => node) update_db.reform(move |_| {
-        let element = node.cast::<web_sys::Element>()
-                .expect_throw("could not resolve node reference");
-        let rect = element.get_bounding_client_rect();
-
-        let left = ((rect.left() - bbox.rect.left) * scale).round();
-        let right = (rect.width() * scale).round() + left;
-        let top = ((rect.top() - bbox.rect.top) * scale).round();
-        let bottom = (rect.height() * scale).round() + top;
-        let box_ = (left as u32, top as u32, right as u32, bottom as u32);
-
-        drag.set(None);
-        if box_ == block.box_ { return None; }
-        Some(OcrBlock {
-            uuid: block.uuid.clone(),
-            box_,
-            vertical: block.vertical,
-            font_size: block.font_size,
-            lines: block.lines.clone(),
-        })
-    }));
-
-    let begin_drag = enclose!((drag)
-        Callback::from(move |e: MouseEvent| {
-            drag.set(Some(Drag::new(e.page_x(), e.page_y())));
-        })
-    );
-
-    let onmousemove = enclose!((drag)
-        Callback::from(move |e: MouseEvent| {
-            if let Some(d) = *drag {
-                gloo_console::console_dbg!(&d);
-                drag.set(Some(d.move_to(e.page_x(), e.page_y())));
+        fn changed(&mut self, ctx: &Context<Self>, previous: &Self::Properties) -> bool {
+            let Props { block, commit_block, .. } = ctx.props();
+            if block != &previous.block || commit_block != &previous.commit_block {
+                self.commit_lines = {
+                    let block = block.clone();
+                    let commit = commit_block.clone();
+                    let link = ctx.link().clone();
+                    commit.reform(Self::new_commit_lines(link, block))
+                };
             }
-        })
-    );
-    let onmouseleave = enclose!((drag)
-        Callback::from(move |_| drag.set(None))
-    );
+            true
+        }
 
-    let remove_newlines = use_memo((), |_|
-    Callback::from(move |e: Event| {
-        let e = e.dyn_into::<ClipboardEvent>()
-            .expect_throw("couldn't convert to ClipboardEvent");
-        let selection = get_selection().and_then(|s| s.to_string().as_string());
-        if let Some(text) = selection {
-            if let Some(clipboard) = e.clipboard_data() {
-                clipboard.set_data("text/plain", &text.replace('\n', ""))
-                    .expect("couldn't write to clipboard");
-                e.prevent_default();
+        fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+            match msg {
+                Self::Message::RemoveFocus => {
+                    self.should_be_focused = false;
+                    if self.contenteditable {
+                        self.contenteditable = false;
+                        true
+                    } else { false }
+                }
+                Self::Message::EnableContentEditing => {
+                    self.contenteditable = true;
+                    true
+                }
+                Self::Message::BeginDrag(x, y) => {
+                    self.should_be_focused = true;
+                    self.drag = Some(Drag::new(x, y));
+                    true
+                }
+                Self::Message::UpdateDrag(x, y) => {
+                    if let Some(mut drag) = self.drag {
+                        self.drag = Some(drag.move_to(x, y));
+                        true
+                    } else { false }
+                }
+                Self::Message::EndDrag => {
+                    if self.drag.is_some() {
+                        self.drag = None;
+                        true
+                    } else { false }
+                }
             }
         }
-    }),
-    );
 
-    let key = block.uuid.as_str();
-    let contenteditable = state.contenteditable();
-    let draggable = Some("false");
-    let oncopy = remove_newlines.as_ref();
-    let onfocus = enclose!((signal)
-        Callback::from(move |_| signal.dispatch(OcrAction::Focus))
-    );
-    let onkeypress = if contenteditable.is_some() {
-        Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true))
-    } else { Callback::default() };
-    let onmousedown = if state.state == TextBlockState::EditableFocused
-    { begin_drag } else { Callback::noop() };
-    html! {
-        <div
-          ref={&state.ref_} {key} class={"ocr-block"}
-          {contenteditable} {style} tabindex={"-1"}
-          {onblur} {oncopy} {ondblclick} {onfocus}
-          {onkeydown} {onkeypress} {onmouseup} {onmousedown} {onmousemove} {onmouseleave}>
-            {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
-        </div>
+        fn view(&self, ctx: &Context<Self>) -> Html {
+            let Props {
+                bbox,
+                block,
+                mutable,
+                scale,
+                backspace_delete,
+                commit_block,
+                ..
+            } = ctx.props();
+            if self.should_be_focused { crate::utils::web::focus(&self.node_ref); }
+            // let focused = crate::utils::web::is_focused(&self.node_ref);
+            let style = self.style(bbox, block, *scale);
+
+            let onmouseup = {
+                let bbox = bbox.clone();
+                let block = block.clone();
+                let link = ctx.link().clone();
+                let node = self.node_ref.clone();
+                let scale = *scale;
+                commit_block.reform(move |_| {
+                    let element = node.cast::<web_sys::Element>()
+                        .expect_throw("could not resolve node reference");
+                    let rect = element.get_bounding_client_rect();
+
+                    let left = ((rect.left() - bbox.rect.left) * scale).round();
+                    let right = (rect.width() * scale).round() + left;
+                    let top = ((rect.top() - bbox.rect.top) * scale).round();
+                    let bottom = (rect.height() * scale).round() + top;
+                    let box_ = (left as u32, top as u32, right as u32, bottom as u32);
+
+                    link.send_message(Self::Message::EndDrag);
+                    if box_ == block.box_ { return None; }
+                    Some(OcrBlock {
+                        uuid: block.uuid.clone(),
+                        box_,
+                        vertical: block.vertical,
+                        font_size: block.font_size,
+                        lines: block.lines.clone(),
+                    })
+                })
+            };
+
+
+            let contenteditable = self.contenteditable.then(|| "true");
+            let noop = Callback::noop();
+            let onblur =
+                if self.contenteditable { &self.commit_lines } else { &noop };
+            let no_bubble = Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true));
+            let noop = Callback::noop();
+            let onkeydown =
+                if *mutable && !self.contenteditable { backspace_delete } else { &noop };
+            let onkeypress =
+                if self.contenteditable { &no_bubble } else { &noop };
+            let noop = Callback::noop();
+            let onmousedown =
+                if *mutable && !self.contenteditable { &self.begin_drag } else { &noop };
+            let onmousemove =
+                if self.drag.is_some() { &self.onmousemove } else { &noop };
+            html! {
+                <div
+                  ref={&self.node_ref}
+                  key={block.uuid.as_str()}
+                  class={"ocr-block"}
+                  {contenteditable} {style} tabindex={"-1"}
+                  {onblur}
+                  oncopy={&self.oncopy}
+                  ondblclick={&self.ondblclick}
+                  {onkeydown} {onkeypress} {onmouseup} {onmousedown} {onmousemove}
+                  onmouseleave={&self.onmouseleave}
+                >
+                    {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
+                </div>
+            }
+        }
     }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Drag {
-    start_x: i32,
-    start_y: i32,
-    pos_x: i32,
-    pos_y: i32,
-}
+    impl OcrTextBlock {
+        fn new_commit_lines(link: Scope<Self>, block: OcrBlock) -> impl Fn(FocusEvent) -> Option<OcrBlock> {
+            move |e: FocusEvent| {
+                link.send_message(TextBlockMessage::RemoveFocus);
+                let target = e.target().unwrap();
+                let div = target.dyn_ref::<web_sys::HtmlElement>().unwrap();
+                let children = div.children();
+                let mut lines = vec![];
+                for index in 0..children.length() {
+                    let child = children.item(index).unwrap();
+                    if let Some(text) = child.text_content() {
+                        lines.push(AttrValue::from(text))
+                    }
+                }
+                (lines != block.lines).then(
+                    || OcrBlock { uuid: block.uuid.clone(), lines, ..block }
+                )
+            }
+        }
 
-impl Drag {
-    fn new(x: i32, y: i32) -> Self {
-        Self { start_x: x, start_y: y, pos_x: x, pos_y: y }
+        fn style(&self, bbox: &BoundingBox, block: &OcrBlock, scale: f64) -> String {
+            let mut s = String::new();
+
+            let dx = self.drag.as_ref().map_or(0, |d: &Drag| d.delta_x()) as f64;
+            let dy = self.drag.as_ref().map_or(0, |d: &Drag| d.delta_y()) as f64;
+
+            let top = bbox.rect.top + ((block.box_.1 as f64) / scale) + dy;
+            let left = bbox.rect.left + ((block.box_.0 as f64) / scale) + dx;
+            let height = ((block.box_.3 - block.box_.1) as f64) / scale;
+            let width = ((block.box_.2 - block.box_.0) as f64) / scale;
+
+            if block.vertical {
+                let right = bbox.screen.width - left - width;
+                s.push_str(&format!("top: {top:.2}px; right: {right:.2}px; "));
+            } else {
+                s.push_str(&format!("top: {top:.2}px; left: {left:.2}px; "));
+            };
+
+            let max_height = (bbox.rect.height + bbox.rect.top - top).floor();
+            let max_width = (bbox.rect.width + bbox.rect.left - left).floor();
+            s.push_str(&format!(
+                "height: {height:.2}px; width: {width:.2}px; \
+         max-height: {max_height}px; max-width: {max_width}px; "
+            ));
+
+            let font = (block.font_size as f64) / scale;
+            let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
+            s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
+            s
+        }
     }
 
-    fn move_to(&self, x: i32, y: i32) -> Self {
-        Self { start_x: self.start_x, start_y: self.start_y, pos_x: x, pos_y: y }
-    }
+    mod drag {
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct Drag {
+            start_x: i32,
+            start_y: i32,
+            pos_x: i32,
+            pos_y: i32,
+        }
 
-    fn delta_x(&self) -> i32 {
-        self.pos_x - self.start_x
-    }
+        impl Drag {
+            pub fn new(x: i32, y: i32) -> Self {
+                Self { start_x: x, start_y: y, pos_x: x, pos_y: y }
+            }
 
-    fn delta_y(&self) -> i32 {
-        self.pos_y - self.start_y
+            pub fn move_to(self, x: i32, y: i32) -> Self {
+                Self { start_x: self.start_x, start_y: self.start_y, pos_x: x, pos_y: y }
+            }
+
+            pub fn delta_x(&self) -> i32 {
+                self.pos_x - self.start_x
+            }
+
+            pub fn delta_y(&self) -> i32 {
+                self.pos_y - self.start_y
+            }
+        }
     }
 }
 
