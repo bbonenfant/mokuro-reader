@@ -65,8 +65,6 @@ pub mod ocr {
     use yew::{NodeRef, Reducible, UseReducerHandle};
     use yew::functional::{hook, use_node_ref, use_reducer_eq};
 
-    use crate::models::OcrBlock;
-    use crate::reader::BoundingBox;
     use crate::utils::web::{focus, get_selection};
 
     #[hook]
@@ -144,35 +142,6 @@ pub mod ocr {
                 return Some("true");
             }
             None
-        }
-
-        pub fn style(&self, block: &OcrBlock, img: &BoundingBox, scale: f64) -> String {
-            let mut s = String::new();
-
-            let top = img.rect.top + ((block.box_.1 as f64) / scale);
-            let left = img.rect.left + ((block.box_.0 as f64) / scale);
-            let height = ((block.box_.3 - block.box_.1) as f64) / scale;
-            let width = ((block.box_.2 - block.box_.0) as f64) / scale;
-
-            if block.vertical {
-                let right = img.screen.width - left - width;
-                s.push_str(&format!("top: {top:.2}px; right: {right:.2}px; "));
-            } else {
-                s.push_str(&format!("top: {top:.2}px; left: {left:.2}px; "));
-            };
-
-            let max_height = (img.rect.height + img.rect.top - top).floor();
-            let max_width = (img.rect.width + img.rect.left - left).floor();
-            s.push_str(&format!(
-                "height: {height:.2}px; width: {width:.2}px; \
-                 max-height: {max_height}px; max-width: {max_width}px; "
-            ));
-
-            let font = (block.font_size as f64) / scale;
-            let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
-            s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
-
-            return s;
         }
     }
 

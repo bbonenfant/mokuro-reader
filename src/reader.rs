@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
 use enclose::enclose;
+use gloo_console::console_dbg;
 use rexie::Rexie;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
@@ -45,7 +46,7 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
         let fallback = fallback.clone();
         use_effect(move || {
             let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
-            move || *fallback.borrow_mut() = generate_suspense_fallback(&ref_)
+            move || *fallback.borrow_mut() = generate_suspense_fallback(&ref_);
         })
     }
 
@@ -81,7 +82,6 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
             // Set a fallback for the ReaderPage Suspense.
             // This will prevent the images from flashing on rerender.
             *fallback.borrow_mut() = generate_suspense_fallback(&reader);
-            gloo_console::log!(format!("{:?}", *fallback.borrow()));
 
             c_signal.dispatch(CursorAction::ForceRerender);
             let left = Rect::try_from(&left).unwrap_or(window.left.rect);
@@ -113,7 +113,7 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     Ok(html! {
         <div ref={reader} id="Reader" {class} tabindex="0" {oncontextmenu} {onkeypress} {onmousemove}>
             if show_magnifier { <Magnifier {cursor} {settings} {left} {right} {force}/> }
-            <Suspense>
+            <Suspense {fallback}>
             if let Some(name) = left_page {
                 <ReaderPage {db} {volume_id} {name} img_ref={left} bbox={window.left} {editable} {onload} />
             }
@@ -141,7 +141,7 @@ fn magnifier(
         *style.borrow_mut() = value;
     }
     let style = style.borrow().to_string();
-    html! {<div class="magnifier" {style}/>}
+    html! {<div id="Magnifier" class="magnifier" {style}/>}
 }
 
 #[autoprops]
@@ -187,11 +187,17 @@ fn reader_page(
 }
 
 fn generate_suspense_fallback(node: &NodeRef) -> Html {
-    html! {<>
-        if let Some(elm) = node.cast::<web_sys::Element>() {
-            {Html::from_html_unchecked(elm.outer_html().into())}
+    if let Some(parent) = node.cast::<web_sys::Element>() {
+        let mut fallback = yew::virtual_dom::vlist::VList::new();
+        let children = parent.children();
+        for idx in 0..children.length() {
+            let child = children.get_with_index(idx).unwrap();
+            if child.id() == "Magnifier" { continue; }
+            fallback.add_child(Html::from_html_unchecked(child.inner_html().into()));
         }
-    </>}
+        return fallback.into();
+    }
+    Html::default()
 }
 
 #[autoprops]
@@ -206,7 +212,39 @@ fn ocr_text_block(
 ) -> Html {
     let state = use_ocr_reducer(editable);
     let signal = state.dispatcher();
-    let style = state.style(&block, &bbox, scale);
+
+    let drag = use_state_eq(|| None);
+
+    let style = {
+        let mut s = String::new();
+
+        let dx = drag.as_ref().map_or(0, |d: &Drag| d.delta_x()) as f64;
+        let dy = drag.as_ref().map_or(0, |d: &Drag| d.delta_y()) as f64;
+
+        let top = bbox.rect.top + ((block.box_.1 as f64) / scale) + dy;
+        let left = bbox.rect.left + ((block.box_.0 as f64) / scale) + dx;
+        let height = ((block.box_.3 - block.box_.1) as f64) / scale;
+        let width = ((block.box_.2 - block.box_.0) as f64) / scale;
+
+        if block.vertical {
+            let right = bbox.screen.width - left - width;
+            s.push_str(&format!("top: {top:.2}px; right: {right:.2}px; "));
+        } else {
+            s.push_str(&format!("top: {top:.2}px; left: {left:.2}px; "));
+        };
+
+        let max_height = (bbox.rect.height + bbox.rect.top - top).floor();
+        let max_width = (bbox.rect.width + bbox.rect.left - left).floor();
+        s.push_str(&format!(
+            "height: {height:.2}px; width: {width:.2}px; \
+             max-height: {max_height}px; max-width: {max_width}px; "
+        ));
+
+        let font = (block.font_size as f64) / scale;
+        let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
+        s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
+        s
+    };
 
     let onblur = enclose!((block, state) update_db.reform(move |e: FocusEvent| {
         state.dispatch(OcrAction::Unfocus); // maybe problematic to have it here
@@ -228,9 +266,9 @@ fn ocr_text_block(
         None
     }));
 
-    let onclick = enclose!((signal)
-        Callback::from(move |_| signal.dispatch(OcrAction::Focus))
-    );
+    // let onclick = enclose!((signal)
+    //     Callback::from(move |_| signal.dispatch(OcrAction::Focus))
+    // );
 
     let ondblclick = enclose!((signal)
         Callback::from(move |_| signal.dispatch(OcrAction::EditContent))
@@ -249,7 +287,7 @@ fn ocr_text_block(
         }
     ));
 
-    let onmouseup = enclose!((bbox, block, state.ref_ => node) update_db.reform(move |_| {
+    let onmouseup = enclose!((bbox, block, drag, state.ref_ => node) update_db.reform(move |_| {
         let element = node.cast::<web_sys::Element>()
                 .expect_throw("could not resolve node reference");
         let rect = element.get_bounding_client_rect();
@@ -259,6 +297,8 @@ fn ocr_text_block(
         let top = ((rect.top() - bbox.rect.top) * scale).round();
         let bottom = (rect.height() * scale).round() + top;
         let box_ = (left as u32, top as u32, right as u32, bottom as u32);
+
+        drag.set(None);
         if box_ == block.box_ { return None; }
         Some(OcrBlock {
             uuid: block.uuid.clone(),
@@ -268,6 +308,24 @@ fn ocr_text_block(
             lines: block.lines.clone(),
         })
     }));
+
+    let begin_drag = enclose!((drag)
+        Callback::from(move |e: MouseEvent| {
+            drag.set(Some(Drag::new(e.page_x(), e.page_y())));
+        })
+    );
+
+    let onmousemove = enclose!((drag)
+        Callback::from(move |e: MouseEvent| {
+            if let Some(d) = *drag {
+                gloo_console::console_dbg!(&d);
+                drag.set(Some(d.move_to(e.page_x(), e.page_y())));
+            }
+        })
+    );
+    let onmouseleave = enclose!((drag)
+        Callback::from(move |_| drag.set(None))
+    );
 
     let remove_newlines = use_memo((), |_|
     Callback::from(move |e: Event| {
@@ -288,18 +346,48 @@ fn ocr_text_block(
     let contenteditable = state.contenteditable();
     let draggable = Some("false");
     let oncopy = remove_newlines.as_ref();
-    let onfocus = Callback::from(|_| gloo_console::log!("onfocus"));
+    let onfocus = enclose!((signal)
+        Callback::from(move |_| signal.dispatch(OcrAction::Focus))
+    );
     let onkeypress = if contenteditable.is_some() {
         Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true))
     } else { Callback::default() };
+    let onmousedown = if state.state == TextBlockState::EditableFocused
+    { begin_drag } else { Callback::noop() };
     html! {
         <div
           ref={&state.ref_} {key} class={"ocr-block"}
-          {contenteditable} {draggable} {style} tabindex={"-1"}
-          {onblur} {onclick} {oncopy} {ondblclick} {onfocus}
-          {onkeydown} {onkeypress} {onmouseup}>
+          {contenteditable} {style} tabindex={"-1"}
+          {onblur} {oncopy} {ondblclick} {onfocus}
+          {onkeydown} {onkeypress} {onmouseup} {onmousedown} {onmousemove} {onmouseleave}>
             {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
         </div>
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Drag {
+    start_x: i32,
+    start_y: i32,
+    pos_x: i32,
+    pos_y: i32,
+}
+
+impl Drag {
+    fn new(x: i32, y: i32) -> Self {
+        Self { start_x: x, start_y: y, pos_x: x, pos_y: y }
+    }
+
+    fn move_to(&self, x: i32, y: i32) -> Self {
+        Self { start_x: self.start_x, start_y: self.start_y, pos_x: x, pos_y: y }
+    }
+
+    fn delta_x(&self) -> i32 {
+        self.pos_x - self.start_x
+    }
+
+    fn delta_y(&self) -> i32 {
+        self.pos_y - self.start_y
     }
 }
 
