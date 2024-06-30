@@ -698,12 +698,15 @@ mod ocr {
             let max_width = (bbox.rect.width + bbox.rect.left - left).floor();
             s.push_str(&format!(
                 "height: {height:.2}px; width: {width:.2}px; \
-         max-height: {max_height}px; max-width: {max_width}px; "
+                 max-height: {max_height}px; max-width: {max_width}px; "
             ));
 
             let font = (block.font_size as f64) / scale;
             let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
             s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
+            if self.drag.is_some_and(|d| d.dirty()) {
+                s.push_str("opacity: 50%; ");
+            }
             s
         }
     }
@@ -715,15 +718,22 @@ mod ocr {
             start_y: i32,
             pos_x: i32,
             pos_y: i32,
+            dirty: bool,
         }
 
         impl Drag {
             pub fn new(x: i32, y: i32) -> Self {
-                Self { start_x: x, start_y: y, pos_x: x, pos_y: y }
+                Self { start_x: x, start_y: y, pos_x: x, pos_y: y, dirty: false }
             }
 
             pub fn move_to(self, x: i32, y: i32) -> Self {
-                Self { start_x: self.start_x, start_y: self.start_y, pos_x: x, pos_y: y }
+                Self {
+                    start_x: self.start_x,
+                    start_y: self.start_y,
+                    pos_x: x,
+                    pos_y: y,
+                    dirty: true,
+                }
             }
 
             pub fn delta_x(&self) -> i32 {
@@ -733,6 +743,8 @@ mod ocr {
             pub fn delta_y(&self) -> i32 {
                 self.pos_y - self.start_y
             }
+
+            pub fn dirty(&self) -> bool { self.dirty }
         }
     }
 }
