@@ -37,6 +37,7 @@ pub fn focus(node: &yew::NodeRef) -> bool {
         .focus().is_ok()
 }
 
+#[allow(dead_code)]
 pub fn is_focused(node: &yew::NodeRef) -> bool {
     let document = window().document()
         .expect_throw("Can't find the global Document");

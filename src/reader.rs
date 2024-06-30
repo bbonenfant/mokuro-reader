@@ -5,18 +5,17 @@ use enclose::enclose;
 use rexie::Rexie;
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use web_sys::{Event, KeyboardEvent, MouseEvent};
-use yew::{AttrValue, Callback, classes, Component, function_component, html, Html, HtmlResult, NodeRef, Properties};
+use yew::{Callback, classes, function_component, html, Html, HtmlResult, NodeRef};
 use yew::functional::{use_effect, use_memo, use_mut_ref, use_node_ref, use_state_eq};
-use yew::suspense::Suspense;
 use yew_autoprops::autoprops;
 use yew_hooks::{use_event_with_window, use_toggle};
 
-use crate::models::{MagnifierSettings, OcrBlock};
+use crate::models::MagnifierSettings;
 pub use crate::reader::window::{BoundingBox, Rect, WindowState};
 use crate::utils::hooks::{
     cursor::{CursorAction, use_cursor}
+
     ,
-    page::{PageAction, use_page_reducer},
     volume::{use_volume_reducer, VolumeAction},
 };
 
@@ -29,7 +28,6 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     // State
     let (cursor, c_signal) = use_cursor();
     let editable = use_toggle(false, true);
-    let fallback = use_mut_ref(yew::virtual_dom::VNode::default);
     let (reader, left, right) = (use_node_ref(), use_node_ref(), use_node_ref());
     let window = use_state_eq(WindowState::default);
 
@@ -41,10 +39,8 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     //  without needing to click the page.
     { // For some reason, using enclose! here causes use_effect to not fire.
         let ref_ = reader.clone();
-        let fallback = fallback.clone();
         use_effect(move || {
             let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
-            move || *fallback.borrow_mut() = generate_suspense_fallback(&ref_)
         })
     }
 
@@ -75,12 +71,8 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     // This registers the size of the page images and then force re-renders
     // the magnifier component. The force re-render is necessary to update
     // the background images, allowing the effect to seamlessly work across pages.
-    let on_image_load = use_memo((), enclose!((c_signal, fallback, left, right, reader, window) |_|
+    let on_image_load = use_memo((), enclose!((c_signal, left, right, window) |_|
         Callback::from(move |_: Event| {
-            // Set a fallback for the ReaderPage Suspense.
-            // This will prevent the images from flashing on rerender.
-            *fallback.borrow_mut() = generate_suspense_fallback(&reader);
-
             c_signal.dispatch(CursorAction::ForceRerender);
             let left = Rect::try_from(&left).unwrap_or(window.left.rect);
             let right = Rect::try_from(&right).unwrap_or(window.right.rect);
@@ -98,7 +90,6 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
 
     let show_magnifier = cursor.magnify;
     let editable = *editable;
-    let fallback = fallback.borrow().clone();
     let settings = volume.data.magnifier;
     let (cursor, force) = (cursor.position, cursor.force);
     let (left, right) = (&left, &right);
@@ -111,14 +102,14 @@ pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
     Ok(html! {
         <div ref={reader} id="Reader" {class} tabindex="0" {oncontextmenu} {onkeypress} {onmousemove}>
             if show_magnifier { <Magnifier {cursor} {settings} {left} {right} {force}/> }
-            <Suspense {fallback}>
+
             if let Some(name) = left_page {
-                <ReaderPage {db} {volume_id} {name} img_ref={left} bbox={window.left} {editable} {onload} />
+                <page::Page {db} {volume_id} {name} node_ref={left} bbox={window.left} mutable={editable} {onload} />
             }
             if let Some(name) = right_page {
-                <ReaderPage {db} {volume_id} {name} img_ref={right} bbox={window.right} {editable} {onload} />
+                <page::Page {db} {volume_id} {name} node_ref={right} bbox={window.right} mutable={editable} {onload} />
             }
-            </Suspense>
+
         </div>
     })
 }
@@ -142,77 +133,207 @@ fn magnifier(
     html! {<div id="Magnifier" class="magnifier" {style}/>}
 }
 
-#[autoprops]
-#[function_component(ReaderPage)]
-fn reader_page(
-    db: &Rc<Rexie>,
-    volume_id: u32,
-    name: AttrValue,
-    img_ref: &NodeRef,
-    bbox: &BoundingBox,
-    editable: bool,
-    onload: Callback<Event>,
-) -> HtmlResult {
-    let reducer = use_page_reducer(db.clone(), volume_id, name)?;
-    let signal = reducer.dispatcher();
+mod page {
+    use std::rc::Rc;
 
-    let commit_block = &Callback::from(enclose!((signal)
-        move |b: Option<OcrBlock>| {
-            if let Some(b) = b { signal.dispatch(PageAction::UpdateBlock(b)); }
-        }
-    ));
-    let delete_block = enclose!((signal) Callback::from(
-        move |uuid: AttrValue| signal.dispatch(PageAction::DeleteBlock(uuid))
-    ));
-    // gloo_console::log!("rerender", name.as_str());
+    use enclose::enclose;
+    use rexie::Rexie;
+    use wasm_bindgen::{JsCast, JsValue, UnwrapThrowExt};
+    use web_sys::{ClipboardEvent, KeyboardEvent};
+    use yew::{AttrValue, Callback, Component, Context, Event, Html, html, NodeRef, Properties};
 
-    let bbox = *bbox;
-    let draggable = Some("false");
-    let src = &reducer.url;
-    let scale = (reducer.ocr.img_height as f64) / bbox.rect.height;
-    Ok(html! {
-        <>
-        <img ref={img_ref} class="reader-image" {draggable} {src} {onload}/>
-        {
-            reducer.ocr.blocks.iter().map(|block| {
-                let backspace_delete = {
-                    let delete_block = delete_block.clone();
-                    let uuid = block.uuid.clone();
-                    Callback::from(move |e: KeyboardEvent| {
-                        if e.code() == "Backspace" {
-                            let prompt = "Are you sure you want to delete this?\nThere is no undo!";
-                            if gloo_dialogs::confirm(prompt) {
-                                delete_block.emit(uuid.clone())
-                            }
-                        }
-                    })
-                };
-                let key = block.uuid.as_str();
-                let block = block.clone();
-                html!{<ocr::OcrTextBlock {key} mutable={editable} {bbox} {scale} {block} {commit_block} {backspace_delete}/>}
-            }).collect::<Html>()
-        }
-        </>
-    })
-}
+    use crate::errors::AppError;
+    use crate::models::{OcrBlock, PageImage, PageOcr};
+    use crate::reader::BoundingBox;
+    use crate::utils::db::{get_page_and_ocr, put_ocr};
+    use crate::utils::web::get_selection;
 
-fn generate_suspense_fallback(node: &NodeRef) -> Html {
-    if let Some(parent) = node.cast::<web_sys::Element>() {
-        let mut fallback = yew::virtual_dom::vlist::VList::new();
-        let children = parent.children();
-        for idx in 0..children.length() {
-            let child = children.get_with_index(idx).unwrap();
-            if child.id() == "Magnifier" { continue; }
-            fallback.add_child(Html::from_html_unchecked(child.inner_html().into()));
-        }
-        return fallback.into();
+    const DELETE_PROMPT: &str = "Are you sure you want to delete this?\nThere is no undo!";
+
+    #[derive(Properties, PartialEq)]
+    pub struct Props {
+        pub db: Rc<Rexie>,
+        pub volume_id: u32,
+        pub name: AttrValue,
+        pub node_ref: NodeRef,
+        pub bbox: BoundingBox,
+        pub mutable: bool,
+        pub onload: Callback<Event>,
     }
-    Html::default()
+
+    pub enum PageMessage {
+        Set(PageImage, PageOcr),
+        Refresh(bool),
+        DeleteBlock(AttrValue),
+        UpdateBlock(OcrBlock),
+    }
+
+    pub struct Page {
+        _url_object: Option<gloo_file::ObjectUrl>,
+        ocr: PageOcr,
+        url: AttrValue,
+
+        commit: Callback<Option<OcrBlock>>,
+        delete: Callback<Option<AttrValue>>,
+        oncopy: Callback<Event>,
+    }
+
+    impl Component for Page {
+        type Properties = Props;
+        type Message = PageMessage;
+        fn create(ctx: &Context<Self>) -> Self {
+            let commit = ctx.link().batch_callback(
+                |block: Option<OcrBlock>|
+                block.map(|b| Self::Message::UpdateBlock(b))
+            );
+            let delete = ctx.link().batch_callback(
+                |uuid: Option<AttrValue>|
+                uuid.map(|uuid| Self::Message::DeleteBlock(uuid))
+            );
+            let oncopy = Callback::from(|e: Event| {
+                let e = e.dyn_into::<ClipboardEvent>()
+                    .expect_throw("couldn't convert to ClipboardEvent");
+                let selection = get_selection().and_then(|s| s.to_string().as_string());
+                if let Some(text) = selection {
+                    if let Some(clipboard) = e.clipboard_data() {
+                        clipboard.set_data("text/plain", &text.replace('\n', ""))
+                            .expect("couldn't write to clipboard");
+                        e.prevent_default();
+                    }
+                }
+            });
+            Self {
+                _url_object: None,
+                ocr: PageOcr::default(),
+                url: AttrValue::default(),
+                commit,
+                delete,
+                oncopy,
+            }
+        }
+
+        fn changed(&mut self, ctx: &Context<Self>, previous: &Self::Properties) -> bool {
+            let Props { db, volume_id, name, .. } = ctx.props();
+            if *volume_id != previous.volume_id || name != &previous.name {
+                self._url_object = None;  // TODO: reconsider
+                ctx.link().send_future(enclose!(
+                    (db, volume_id => id, name) Self::fetch(db, id, name)
+                ));
+                return false;
+            }
+            return true;
+        }
+
+        fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+            match msg {
+                PageMessage::Set(image, ocr) => {
+                    let object = gloo_file::ObjectUrl::from(image);
+                    self.url = AttrValue::from(object.to_string());
+                    self._url_object = Some(object);
+                    self.ocr = ocr;
+                    true
+                }
+                PageMessage::Refresh(_) => {
+                    false
+                }
+                PageMessage::DeleteBlock(uuid) => {
+                    let index = self.ocr.blocks.iter()
+                        .position(|b| b.uuid == uuid).unwrap();
+                    self.ocr.blocks.remove(index);
+
+                    let ocr = self.ocr.clone();
+                    let Props { db, volume_id, name, .. } = ctx.props();
+                    ctx.link().send_future(enclose!(
+                        (db, volume_id => id, name) Self::commit_ocr(db, id, name, ocr)
+                    ));
+                    true
+                }
+                PageMessage::UpdateBlock(block) => {
+                    let index = self.ocr.blocks.iter()
+                        .position(|b| b.uuid == block.uuid).unwrap();
+                    self.ocr.blocks[index] = block;
+
+                    let ocr = self.ocr.clone();
+                    let Props { db, volume_id, name, .. } = ctx.props();
+                    ctx.link().send_future(enclose!(
+                        (db, volume_id => id, name) Self::commit_ocr(db, id, name, ocr)
+                    ));
+                    true
+                }
+            }
+        }
+
+        fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+            if first_render {
+                let Props { db, volume_id, name, .. } = ctx.props();
+                ctx.link().send_future(enclose!(
+                    (db, volume_id => id, name) Self::fetch(db, id, name)
+                ))
+            }
+        }
+
+        fn view(&self, ctx: &Context<Self>) -> Html {
+            if self._url_object.is_none() {
+                return Html::default();
+            }
+
+            let Props { bbox, node_ref, onload, mutable, .. } = ctx.props();
+            let bbox = *bbox;
+            let draggable = Some("false");
+            let oncopy = &self.oncopy;
+            let src = &self.url;
+            let scale = (self.ocr.img_height as f64) / bbox.rect.height;
+            html! {
+                <>
+                <img ref={node_ref} class="reader-image" {draggable} {src} {onload}/>
+                {
+                    self.ocr.blocks.iter().map(|block| {
+                        let backspace_delete = {
+                            let uuid = block.uuid.clone();
+                            self.delete.reform(
+                                move |e: KeyboardEvent| {
+                                    if e.code() == "Backspace" {
+                                        if gloo_dialogs::confirm(DELETE_PROMPT) {
+                                            return Some(uuid.clone())
+                                        }
+                                    }
+                                    None
+                                }
+                            )
+                        };
+                        let key = block.uuid.as_str();
+                        let block = block.clone();
+                        let commit_block = &self.commit;
+                        html!{<super::ocr::TextBlock {key} {mutable} {bbox} {scale} {block} {commit_block} {backspace_delete} {oncopy}/>}
+                    }).collect::<Html>()
+                }
+                </>
+            }
+        }
+    }
+
+    impl Page {
+        async fn fetch(db: Rc<Rexie>, id: u32, name: AttrValue) -> PageMessage {
+            let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
+            let (image, ocr) = get_page_and_ocr(&db, &key.into()).await
+                .expect_throw("failed to get Page and Ocr data from IndexedDB");
+            PageMessage::Set(image, ocr)
+        }
+        async fn commit_ocr(db: Rc<Rexie>, id: u32, name: AttrValue, ocr: PageOcr) -> PageMessage {
+            let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
+            put_ocr(&db, &ocr, &key).await.unwrap_or_else(|error| {
+                if let AppError::RexieError(err) = error {
+                    gloo_console::error!(JsValue::from(err));
+                }
+            });
+            PageMessage::Refresh(true)
+        }
+    }
 }
 
 mod ocr {
     use wasm_bindgen::{JsCast, UnwrapThrowExt};
-    use web_sys::{ClipboardEvent, Event, FocusEvent, KeyboardEvent, MouseEvent};
+    use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
     use yew::{AttrValue, Callback, Component, Context, Html, html, NodeRef, Properties};
     use yew::html::Scope;
 
@@ -220,7 +341,6 @@ mod ocr {
 
     use crate::models::OcrBlock;
     use crate::reader::BoundingBox;
-    use crate::utils::web::get_selection;
 
     #[derive(Properties, PartialEq)]
     pub struct Props {
@@ -231,6 +351,7 @@ mod ocr {
 
         pub backspace_delete: Callback<KeyboardEvent>,
         pub commit_block: Callback<Option<OcrBlock>>,
+        pub oncopy: Callback<Event>,
     }
 
     pub enum TextBlockMessage {
@@ -241,7 +362,7 @@ mod ocr {
         EndDrag,
     }
 
-    pub struct OcrTextBlock {
+    pub struct TextBlock {
         contenteditable: bool,
         drag: Option<Drag>,
         node_ref: NodeRef,
@@ -250,12 +371,11 @@ mod ocr {
         begin_drag: Callback<MouseEvent>,
         commit_lines: Callback<FocusEvent>,
         ondblclick: Callback<MouseEvent>,
-        oncopy: Callback<Event>,
         onmouseleave: Callback<MouseEvent>,
         onmousemove: Callback<MouseEvent>,
     }
 
-    impl Component for OcrTextBlock {
+    impl Component for TextBlock {
         type Properties = Props;
         type Message = TextBlockMessage;
         fn create(ctx: &Context<Self>) -> Self {
@@ -269,18 +389,6 @@ mod ocr {
             };
             let ondblclick =
                 ctx.link().callback(|_: MouseEvent| Self::Message::EnableContentEditing);
-            let oncopy = Callback::from(|e: Event| {
-                let e = e.dyn_into::<ClipboardEvent>()
-                    .expect_throw("couldn't convert to ClipboardEvent");
-                let selection = get_selection().and_then(|s| s.to_string().as_string());
-                if let Some(text) = selection {
-                    if let Some(clipboard) = e.clipboard_data() {
-                        clipboard.set_data("text/plain", &text.replace('\n', ""))
-                            .expect("couldn't write to clipboard");
-                        e.prevent_default();
-                    }
-                }
-            });
             let onmouseleave =
                 ctx.link().callback(|_: MouseEvent| Self::Message::EndDrag);
             let onmousemove = ctx.link().callback(|e: MouseEvent| {
@@ -298,7 +406,6 @@ mod ocr {
                 begin_drag,
                 commit_lines,
                 ondblclick,
-                oncopy,
                 onmouseleave,
                 onmousemove,
             }
@@ -336,7 +443,7 @@ mod ocr {
                     true
                 }
                 Self::Message::UpdateDrag(x, y) => {
-                    if let Some(mut drag) = self.drag {
+                    if let Some(drag) = self.drag {
                         self.drag = Some(drag.move_to(x, y));
                         true
                     } else { false }
@@ -358,6 +465,7 @@ mod ocr {
                 scale,
                 backspace_delete,
                 commit_block,
+                oncopy,
                 ..
             } = ctx.props();
             if self.should_be_focused { crate::utils::web::focus(&self.node_ref); }
@@ -416,7 +524,7 @@ mod ocr {
                   class={"ocr-block"}
                   {contenteditable} {style} tabindex={"-1"}
                   {onblur}
-                  oncopy={&self.oncopy}
+                  {oncopy}
                   ondblclick={&self.ondblclick}
                   {onkeydown} {onkeypress} {onmouseup} {onmousedown} {onmousemove}
                   onmouseleave={&self.onmouseleave}
@@ -427,7 +535,7 @@ mod ocr {
         }
     }
 
-    impl OcrTextBlock {
+    impl TextBlock {
         fn new_commit_lines(link: Scope<Self>, block: OcrBlock) -> impl Fn(FocusEvent) -> Option<OcrBlock> {
             move |e: FocusEvent| {
                 link.send_message(TextBlockMessage::RemoveFocus);
