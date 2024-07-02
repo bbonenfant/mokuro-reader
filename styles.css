@@ -199,6 +199,7 @@ input#file-upload {
                 outline: 2px solid red;
                 overflow: hidden;
                 resize: both;
+                z-index: 5;
             }
         }
     }

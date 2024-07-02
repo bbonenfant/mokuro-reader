@@ -786,16 +786,32 @@ mod ocr {
                         // potentially a drag, but if the dimensions of the <div> has
                         // changed, we abort the drag update and let the browser
                         // handle the resize.
-                        let Props { block, scale, .. } = ctx.props();
+                        let Props { bbox, block, scale, .. } = ctx.props();
                         let rect = get_bounding_rect(&self.node_ref);
                         if ((rect.height() * scale) - block.height()).abs() >= 0.1
                             || ((rect.width() * scale) - block.width()).abs() >= 0.1 {
-                            // using 0.1 above ^ might be problematic.
+                            // using 0.1 is arbitrary and might be problematic.  ^
                             self.drag = None;
                             return true;
                         }
 
-                        self.drag = Some(drag.move_to(x, y));
+                        // Ensure that the block is not dragged outside the image.
+                        // We stay 1px away from the image border to avoid edge cases.
+                        let drag = {
+                            let new = drag.move_x(x);
+                            let dx = (new.delta_x() - drag.delta_x()) as f64;
+                            if (rect.left() + dx) < (bbox.rect.left + 1.)
+                                || (rect.right() + dx) > (bbox.rect.right - 1.)
+                            { drag } else { new }
+                        };
+                        let drag = {
+                            let new = drag.move_y(y);
+                            let dy = (new.delta_y() - drag.delta_y()) as f64;
+                            if (rect.top() + dy) < (bbox.rect.top + 1.)
+                                || (rect.bottom() + dy) > (bbox.rect.bottom - 1.)
+                            { drag } else { new }
+                        };
+                        self.drag = Some(drag);
                         true
                     } else { false }
                 }
@@ -967,6 +983,26 @@ mod drag {
                 pos_x: x,
                 pos_y: y,
                 dirty: self.dirty || (self.start_x != x) || (self.start_y != y),
+            }
+        }
+
+        pub fn move_x(&self, x: i32) -> Self {
+            Self {
+                start_x: self.start_x,
+                start_y: self.start_y,
+                pos_x: x,
+                pos_y: self.pos_y,
+                dirty: self.dirty || (self.start_x != x),
+            }
+        }
+
+        pub fn move_y(&self, y: i32) -> Self {
+            Self {
+                start_x: self.start_x,
+                start_y: self.start_y,
+                pos_x: self.pos_x,
+                pos_y: y,
+                dirty: self.dirty || (self.start_y != y),
             }
         }
 
