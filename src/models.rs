@@ -136,11 +136,31 @@ pub struct PageOcr {
 pub struct OcrBlock {
     pub uuid: AttrValue,
     #[serde(rename = "box")]
+    // (left, top, right, bottom)
     pub box_: (u32, u32, u32, u32),
     pub vertical: bool,
     pub font_size: u32,
     pub lines: Vec<AttrValue>,
     // lines_coords: Vec<Vec<(f32, f32)>>,
+}
+
+impl OcrBlock {
+    pub fn new(
+        top: f64, left: f64, bottom: f64, right: f64,
+        font_size: u32, vertical: bool,
+    ) -> Self {
+        let uuid = {
+            let ts = uuid::Timestamp::now(uuid::NoContext);
+            uuid::Uuid::new_v7(ts).simple().to_string().into()
+        };
+        let box_ = (left as u32, top as u32, right as u32, bottom as u32);
+        Self { uuid, box_, vertical, font_size, lines: Vec::default() }
+    }
+
+    pub fn top(&self) -> f64 { self.box_.1 as f64 }
+    pub fn left(&self) -> f64 { self.box_.0 as f64 }
+    pub fn height(&self) -> f64 { (self.box_.3 - self.box_.1) as f64 }
+    pub fn width(&self) -> f64 { (self.box_.2 - self.box_.0) as f64 }
 }
 
 #[derive(Clone)]

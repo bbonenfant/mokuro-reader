@@ -169,6 +169,19 @@ input#file-upload {
         }
     }
 
+    &.editable .reader-image {
+        cursor: crosshair;
+    }
+
+    .new-ocr-block {
+        position: absolute;
+        cursor: crosshair;
+        background-color: lightgray;
+        outline: 1px solid darkgray;
+        opacity: 50%;
+        pointer-events: none;
+    }
+
     &.editable .ocr-block {
         background-color: lightgray;
 

@@ -7,7 +7,7 @@ use web_sys::{Event, HtmlElement, KeyboardEvent, MouseEvent};
 use yew::{Callback, Component, Context, html, Html, NodeRef, Properties};
 
 use crate::models::VolumeMetadata;
-use crate::reader::window::{BoundingBox, Rect, WindowState};
+use crate::reader::window::{Rect, WindowState};
 use crate::utils::{
     db::{get_volume, put_volume},
     timestamp,
@@ -81,11 +81,13 @@ impl Component for Reader {
         );
         let handle_image_load =
             ctx.link().callback(|_: Event| Self::Message::Resize(true));
-        let handle_right_click =
-            ctx.link().callback(|_: MouseEvent| Self::Message::MagnifierToggle);
+        let handle_right_click = ctx.link().callback(|e: MouseEvent| {
+            e.prevent_default();
+            Self::Message::MagnifierToggle
+        });
 
         let update_cursor = ctx.link().callback(
-            |e: MouseEvent| Self::Message::UpdateCursor(e.page_x(), e.page_y())
+            |e: MouseEvent| Self::Message::UpdateCursor(e.x(), e.y())
         );
 
         let cursor = Cursor::default();
@@ -379,14 +381,16 @@ mod page {
     use enclose::enclose;
     use rexie::Rexie;
     use wasm_bindgen::{JsCast, JsValue, UnwrapThrowExt};
-    use web_sys::{ClipboardEvent, KeyboardEvent};
+    use web_sys::{ClipboardEvent, KeyboardEvent, MouseEvent};
     use yew::{AttrValue, Callback, Component, Context, Event, Html, html, NodeRef, Properties};
 
     use crate::errors::AppError;
     use crate::models::{OcrBlock, PageImage, PageOcr};
-    use crate::reader::BoundingBox;
     use crate::utils::db::{get_page_and_ocr, put_ocr};
     use crate::utils::web::get_selection;
+
+    use super::drag::Drag;
+    use super::window::BoundingBox;
 
     const DELETE_PROMPT: &str = "Are you sure you want to delete this?\nThere is no undo!";
 
@@ -406,15 +410,22 @@ mod page {
         Refresh(bool),
         DeleteBlock(AttrValue),
         UpdateBlock(OcrBlock),
+        BeginDrag(i32, i32),
+        UpdateDrag(i32, i32),
+        EndDrag,
     }
 
     pub struct Page {
         _url_object: Option<gloo_file::ObjectUrl>,
+        drag: Option<Drag>,
         ocr: PageOcr,
         url: AttrValue,
 
         commit: Callback<Option<OcrBlock>>,
         delete: Callback<Option<AttrValue>>,
+        begin_drag: Callback<MouseEvent>,
+        end_drag: Callback<MouseEvent>,
+        onmousemove: Callback<MouseEvent>,
         oncopy: Callback<Event>,
     }
 
@@ -430,6 +441,12 @@ mod page {
                 |uuid: Option<AttrValue>|
                 uuid.map(|uuid| Self::Message::DeleteBlock(uuid))
             );
+            let begin_drag =
+                ctx.link().callback(|e: MouseEvent| Self::Message::BeginDrag(e.x(), e.y()));
+            let end_drag =
+                ctx.link().callback(|_: MouseEvent| Self::Message::EndDrag);
+            let onmousemove =
+                ctx.link().callback(|e: MouseEvent| Self::Message::UpdateDrag(e.x(), e.y()));
             let oncopy = Callback::from(|e: Event| {
                 let e = e.dyn_into::<ClipboardEvent>()
                     .expect_throw("couldn't convert to ClipboardEvent");
@@ -444,10 +461,14 @@ mod page {
             });
             Self {
                 _url_object: None,
+                drag: None,
                 ocr: PageOcr::default(),
                 url: AttrValue::default(),
                 commit,
                 delete,
+                begin_drag,
+                end_drag,
+                onmousemove,
                 oncopy,
             }
         }
@@ -500,6 +521,33 @@ mod page {
                     ));
                     true
                 }
+                PageMessage::BeginDrag(x, y) => {
+                    self.drag = Some(Drag::new(x, y));
+                    true
+                }
+                PageMessage::UpdateDrag(x, y) => {
+                    if let Some(drag) = self.drag {
+                        self.drag = Some(drag.move_to(x, y));
+                        true
+                    } else { false }
+                }
+                PageMessage::EndDrag => {
+                    let drag = self.drag.take();
+                    if let Some(drag) = drag.filter(|d| d.dirty()) {
+                        // Prevent creating a new block from a click.
+                        if !drag.dirty() { return true; }
+
+                        let Props { bbox, db, name, volume_id, .. } = ctx.props();
+                        let block = create_block(&drag, bbox, self.scale(bbox));
+                        self.ocr.blocks.push(block);
+
+                        let ocr = self.ocr.clone();
+                        ctx.link().send_future(enclose!(
+                            (db, volume_id => id, name) Self::commit_ocr(db, id, name, ocr)
+                        ));
+                        true
+                    } else { false }
+                }
             }
         }
 
@@ -522,10 +570,31 @@ mod page {
             let draggable = Some("false");
             let oncopy = &self.oncopy;
             let src = &self.url;
-            let scale = (self.ocr.img_height as f64) / bbox.rect.height;
+            let scale = self.scale(&bbox);
+
+            let noop = Callback::noop();
+            let dragging = *mutable && self.drag.is_some();
+            let onmousedown = if *mutable { &self.begin_drag } else { &noop };
+            let onmouseup = if *mutable { &self.end_drag } else { &noop };
+            let onmousemove = if dragging { &self.onmousemove } else { &noop };
+            let onmouseout = if dragging { &self.end_drag } else { &noop };
+
+            let new_block = if let Some(drag) = &self.drag.filter(|d| d.dirty()) {
+                let style = format!(
+                    "top: {}px; left: {}px; height: {}px; width: {}px;",
+                    drag.top(), drag.left(), drag.delta_y().abs(), drag.delta_x().abs()
+                );
+                html! { <div class="new-ocr-block" {style}/> }
+            } else { Html::default() };
+
             html! {
                 <>
-                <img ref={node_ref} class="reader-image" {draggable} {src} {onload}/>
+                <img
+                  ref={node_ref} class="reader-image"
+                  {draggable} {src}
+                  {onload} {onmousedown} {onmouseup} {onmousemove} {onmouseout}
+                />
+                {new_block}
                 {
                     self.ocr.blocks.iter().map(|block| {
                         let backspace_delete = {
@@ -569,19 +638,41 @@ mod page {
             });
             PageMessage::Refresh(true)
         }
+
+        #[inline(always)]
+        fn scale(&self, bbox: &BoundingBox) -> f64 {
+            (self.ocr.img_height as f64) / bbox.rect.height
+        }
+    }
+
+    fn create_block(drag: &Drag, bbox: &BoundingBox, scale: f64) -> OcrBlock {
+        let clamp = 26f64;
+        let font_size = 20u32;
+
+        let (drag_top, drag_left) = (drag.top() as f64, drag.left() as f64);
+        let (drag_width, drag_height) = (drag.delta_x().abs() as f64, drag.delta_y().abs() as f64);
+
+        let left = (drag_left - bbox.rect.left) * scale;
+        let right = (drag_width * scale).max(clamp) + left;
+        let top = (drag_top - bbox.rect.top) * scale;
+        let bottom = (drag_height * scale).max(clamp) + top;
+        let vertical = drag.delta_x() < 0;
+
+        OcrBlock::new(top, left, bottom, right, font_size, vertical)
     }
 }
 
 mod ocr {
-    use wasm_bindgen::{JsCast, UnwrapThrowExt};
+    use wasm_bindgen::JsCast;
     use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
     use yew::{AttrValue, Callback, Component, Context, Html, html, NodeRef, Properties};
     use yew::html::Scope;
 
-    use drag::Drag;
-
     use crate::models::OcrBlock;
-    use crate::reader::BoundingBox;
+    use crate::utils::web::get_bounding_rect;
+
+    use super::drag::Drag;
+    use super::window::BoundingBox;
 
     #[derive(Properties, PartialEq)]
     pub struct Props {
@@ -669,7 +760,7 @@ mod ocr {
             true
         }
 
-        fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+        fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
             match msg {
                 Self::Message::RemoveFocus => {
                     self.should_be_focused = false;
@@ -689,6 +780,21 @@ mod ocr {
                 }
                 Self::Message::UpdateDrag(x, y) => {
                     if let Some(drag) = self.drag {
+                        // There is not a way to differentiate at the time of click
+                        // whether the mouse is clicking on the text box <div> or the
+                        // resize handler. Therefore, we treat every click like it's
+                        // potentially a drag, but if the dimensions of the <div> has
+                        // changed, we abort the drag update and let the browser
+                        // handle the resize.
+                        let Props { block, scale, .. } = ctx.props();
+                        let rect = get_bounding_rect(&self.node_ref);
+                        if ((rect.height() * scale) - block.height()).abs() >= 0.1
+                            || ((rect.width() * scale) - block.width()).abs() >= 0.1 {
+                            // using 0.1 above ^ might be problematic.
+                            self.drag = None;
+                            return true;
+                        }
+
                         self.drag = Some(drag.move_to(x, y));
                         true
                     } else { false }
@@ -728,10 +834,7 @@ mod ocr {
                 let node = self.node_ref.clone();
                 let scale = *scale;
                 commit_block.reform(move |_| {
-                    let element = node.cast::<web_sys::Element>()
-                        .expect_throw("could not resolve node reference");
-                    let rect = element.get_bounding_client_rect();
-
+                    let rect = get_bounding_rect(&node);
                     let left = ((rect.left() - bbox.rect.left) * scale).round();
                     let right = (rect.width() * scale).round() + left;
                     let top = ((rect.top() - bbox.rect.top) * scale).round();
@@ -749,7 +852,6 @@ mod ocr {
                     })
                 })
             };
-
 
             let contenteditable = self.contenteditable.then(|| "true");
             let onblur =
@@ -809,10 +911,10 @@ mod ocr {
             let dx = self.drag.as_ref().map_or(0, |d: &Drag| d.delta_x()) as f64;
             let dy = self.drag.as_ref().map_or(0, |d: &Drag| d.delta_y()) as f64;
 
-            let top = bbox.rect.top + ((block.box_.1 as f64) / scale) + dy;
-            let left = bbox.rect.left + ((block.box_.0 as f64) / scale) + dx;
-            let height = ((block.box_.3 - block.box_.1) as f64) / scale;
-            let width = ((block.box_.2 - block.box_.0) as f64) / scale;
+            let top = bbox.rect.top + (block.top() / scale) + dy;
+            let left = bbox.rect.left + (block.left() / scale) + dx;
+            let height = block.height() / scale;
+            let width = block.width() / scale;
 
             if block.vertical {
                 let right = bbox.screen.width - left - width;
@@ -822,7 +924,11 @@ mod ocr {
             };
 
             let max_height = (bbox.rect.height + bbox.rect.top - top).floor();
-            let max_width = (bbox.rect.width + bbox.rect.left - left).floor();
+            let max_width = if block.vertical {
+                (left + width - bbox.rect.left).floor()
+            } else {
+                (bbox.rect.right - left).floor()
+            };
             s.push_str(&format!(
                 "height: {height:.2}px; width: {width:.2}px; \
                  max-height: {max_height}px; max-width: {max_width}px; "
@@ -837,42 +943,44 @@ mod ocr {
             s
         }
     }
+}
 
-    mod drag {
-        #[derive(Clone, Copy, Debug, PartialEq)]
-        pub struct Drag {
-            start_x: i32,
-            start_y: i32,
-            pos_x: i32,
-            pos_y: i32,
-            dirty: bool,
+mod drag {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Drag {
+        start_x: i32,
+        start_y: i32,
+        pos_x: i32,
+        pos_y: i32,
+        dirty: bool,
+    }
+
+    impl Drag {
+        pub fn new(x: i32, y: i32) -> Self {
+            Self { start_x: x, start_y: y, pos_x: x, pos_y: y, dirty: false }
         }
 
-        impl Drag {
-            pub fn new(x: i32, y: i32) -> Self {
-                Self { start_x: x, start_y: y, pos_x: x, pos_y: y, dirty: false }
+        pub fn move_to(self, x: i32, y: i32) -> Self {
+            Self {
+                start_x: self.start_x,
+                start_y: self.start_y,
+                pos_x: x,
+                pos_y: y,
+                dirty: self.dirty || (self.start_x != x) || (self.start_y != y),
             }
-
-            pub fn move_to(self, x: i32, y: i32) -> Self {
-                Self {
-                    start_x: self.start_x,
-                    start_y: self.start_y,
-                    pos_x: x,
-                    pos_y: y,
-                    dirty: self.dirty || (self.start_x != x) || (self.start_y != y),
-                }
-            }
-
-            pub fn delta_x(&self) -> i32 {
-                self.pos_x - self.start_x
-            }
-
-            pub fn delta_y(&self) -> i32 {
-                self.pos_y - self.start_y
-            }
-
-            pub fn dirty(&self) -> bool { self.dirty }
         }
+
+        pub fn delta_x(&self) -> i32 {
+            self.pos_x - self.start_x
+        }
+
+        pub fn delta_y(&self) -> i32 {
+            self.pos_y - self.start_y
+        }
+
+        pub fn left(&self) -> i32 { self.pos_x.min(self.start_x) }
+        pub fn top(&self) -> i32 { self.pos_y.min(self.start_y) }
+        pub fn dirty(&self) -> bool { self.dirty }
     }
 }
 
