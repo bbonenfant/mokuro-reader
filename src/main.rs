@@ -46,7 +46,7 @@ fn app() -> Html {
 enum Route {
     #[at("/")]
     Home,
-    #[at("/reader/volume/:volume_id")]
+    #[at("/volume/:volume_id/reader")]
     Reader { volume_id: u32 },
     #[not_found]
     #[at("/404")]
@@ -56,11 +56,7 @@ enum Route {
 fn switch(db: &Rc<Rexie>, route: Route) -> Html {
     match route {
         Route::Home => html! { <Home {db}/> },
-        Route::Reader { volume_id } => html! {
-            <Suspense fallback={html!{}} >
-                <Reader {db} {volume_id} />
-            </Suspense>
-        },
+        Route::Reader { volume_id } => html! { <Reader {db} {volume_id}/> },
         Route::NotFound => html! { <h1>{ "404" }</h1> },
     }
 }

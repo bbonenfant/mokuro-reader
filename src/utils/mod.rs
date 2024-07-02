@@ -1,5 +1,4 @@
 pub mod db;
-pub mod hooks;
 pub mod web;
 pub mod zip;
 

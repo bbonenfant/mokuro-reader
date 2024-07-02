@@ -25,6 +25,11 @@ pub fn window() -> web_sys::Window {
     web_sys::window().expect_throw("Can't find the global Window")
 }
 
+#[inline(always)]
+pub fn document() -> web_sys::Document {
+    window().document().expect_throw("Can't find the global Document")
+}
+
 /// Try to get selected text within the html document.
 pub fn get_selection() -> Option<web_sys::Selection> {
     window().get_selection().ok().flatten()
@@ -37,11 +42,13 @@ pub fn focus(node: &yew::NodeRef) -> bool {
         .focus().is_ok()
 }
 
+pub fn focused_element() -> Option<web_sys::Element> {
+    document().active_element()
+}
+
 #[allow(dead_code)]
 pub fn is_focused(node: &yew::NodeRef) -> bool {
-    let document = window().document()
-        .expect_throw("Can't find the global Document");
     let element = node.cast::<web_sys::Element>()
         .expect_throw("Could not resolve node reference");
-    document.active_element().is_some_and(|elm| elm == element)
+    focused_element().is_some_and(|elm| elm == element)
 }

@@ -2,114 +2,233 @@ use std::rc::Rc;
 
 use enclose::enclose;
 use rexie::Rexie;
-use wasm_bindgen::{JsCast, UnwrapThrowExt};
-use web_sys::{Event, KeyboardEvent, MouseEvent};
-use yew::{Callback, classes, function_component, html, HtmlResult};
-use yew::functional::{use_effect, use_memo, use_node_ref, use_state_eq};
-use yew_autoprops::autoprops;
-use yew_hooks::{use_event_with_window, use_toggle};
+use wasm_bindgen::UnwrapThrowExt;
+use web_sys::{Event, HtmlElement, KeyboardEvent, MouseEvent};
+use yew::{Callback, Component, Context, html, Html, NodeRef, Properties};
 
-pub use crate::reader::window::{BoundingBox, Rect, WindowState};
-use crate::utils::hooks::{
-    cursor::{CursorAction, use_cursor},
-    volume::{use_volume_reducer, VolumeAction},
+use crate::models::VolumeMetadata;
+use crate::reader::window::{BoundingBox, Rect, WindowState};
+use crate::utils::{
+    db::{get_volume, put_volume},
+    timestamp,
+    web::{focused_element, window},
 };
 
-#[autoprops]
-#[function_component(Reader)]
-pub fn reader(db: &Rc<Rexie>, volume_id: u32) -> HtmlResult {
-    let volume = use_volume_reducer(db.clone(), volume_id)?;
-    gloo_console::debug!("rerender: Reader");
+#[derive(Default)]
+pub struct Cursor {
+    pub magnify: bool,
+    pub force: u64,
+    pub position: (i32, i32),
+}
 
-    // State
-    let (cursor, c_signal) = use_cursor();
-    let editable = use_toggle(false, true);
-    let (reader, left, right) = (use_node_ref(), use_node_ref(), use_node_ref());
-    let window = use_state_eq(WindowState::default);
+#[derive(Properties, PartialEq)]
+pub struct ReaderProps {
+    pub db: Rc<Rexie>,
+    pub volume_id: u32,
+}
 
-    let (right_page, left_page) =
-        volume.data.reader_state.select_pages(&volume.data.pages);
+pub enum ReaderMessage {
+    Set(VolumeMetadata),
+    MagnifierToggle,
+    MutableToggle,
+    NextPage,
+    PrevPage,
+    Resize(bool),
+    UpdateCursor(i32, i32),
+}
 
-    // Focus on the reader div when pages change.
-    // This is so that the keyboard shortcuts will be caught and handled
-    //  without needing to click the page.
-    { // For some reason, using enclose! here causes use_effect to not fire.
-        let ref_ = reader.clone();
-        use_effect(move || {
-            let _ = ref_.cast::<web_sys::HtmlElement>().unwrap().focus();
-        })
+pub struct Reader {
+    cursor: Cursor,
+    mutable: bool,
+    node: NodeRef,
+    node_left: NodeRef,
+    node_right: NodeRef,
+    volume: Option<VolumeMetadata>,
+    window: WindowState,
+
+    handle_keypress: Callback<KeyboardEvent>,
+    handle_image_load: Callback<Event>,
+    handle_right_click: Callback<MouseEvent>,
+    update_cursor: Callback<MouseEvent>,
+    _resize_listener: gloo_events::EventListener,
+}
+
+impl Component for Reader {
+    type Message = ReaderMessage;
+    type Properties = ReaderProps;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        let _resize_listener = {
+            let link = ctx.link().clone();
+            gloo_events::EventListener::new_with_options(
+                &window(),
+                "resize",
+                gloo_events::EventListenerOptions::enable_prevent_default(),
+                move |_: &Event| link.send_message(Self::Message::Resize(false)),
+            )
+        };
+
+        let handle_keypress = ctx.link().batch_callback(
+            |e: KeyboardEvent| {
+                // gloo_console::log!("KeyCode:", e.code());
+                match e.code().as_str() {
+                    "KeyE" => Some(Self::Message::MutableToggle),
+                    "KeyX" => Some(Self::Message::PrevPage),
+                    "KeyZ" => Some(Self::Message::NextPage),
+                    _ => None
+                }
+            }
+        );
+        let handle_image_load =
+            ctx.link().callback(|_: Event| Self::Message::Resize(true));
+        let handle_right_click =
+            ctx.link().callback(|_: MouseEvent| Self::Message::MagnifierToggle);
+
+        let update_cursor = ctx.link().callback(
+            |e: MouseEvent| Self::Message::UpdateCursor(e.page_x(), e.page_y())
+        );
+
+        let cursor = Cursor::default();
+        let window = WindowState::default();
+        Self {
+            cursor,
+            mutable: false,
+            node: NodeRef::default(),
+            node_left: NodeRef::default(),
+            node_right: NodeRef::default(),
+            volume: None,
+            window,
+            handle_keypress,
+            handle_image_load,
+            handle_right_click,
+            update_cursor,
+            _resize_listener,
+        }
     }
 
-    // These are the keyboard shortcuts/commands.
-    let handle_keypress = use_memo((), enclose!((editable, volume) |_| {
-        Callback::from(move |e: KeyboardEvent| {
-            // gloo_console::log!("KeyCode:", e.code());
-            if e.code() == "KeyE" { editable.toggle(); }
-            else if e.code() == "KeyX" { volume.dispatch(VolumeAction::PrevPage); }
-            else if e.code() == "KeyZ" { volume.dispatch(VolumeAction::NextPage); }
-        })
-    }));
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+        if first_render {
+            let ReaderProps { db, volume_id } = ctx.props();
+            ctx.link().send_future(enclose!((db, volume_id) async move {
+                let volume = get_volume(&db, volume_id).await
+                    .expect_throw("failed to get volume from IndexedDB");
+                Self::Message::Set(volume)
+            }))
+        }
 
-    // Hook into resize event of the window.
-    // We need to keep track of the size of the page images.
-    use_event_with_window("resize", enclose!((left, right, window) move |_: Event| {
-        let left = Rect::try_from(&left).unwrap_or(window.left.rect);
-        let right = Rect::try_from(&right).unwrap_or(window.right.rect);
-        window.set(WindowState::new(left, right))
-    }));
-
-    // Track cursor movements. This needed for the magnifier.
-    let update_cursor = use_memo((), enclose!((c_signal) |_| {
-        Callback::from(move |e| { c_signal.dispatch(CursorAction::Update(e)) })
-    }));
-
-    // This callback is intended for when the images finish loading.
-    // This registers the size of the page images and then force re-renders
-    // the magnifier component. The force re-render is necessary to update
-    // the background images, allowing the effect to seamlessly work across pages.
-    let on_image_load = use_memo((), enclose!((c_signal, left, right, window) |_|
-        Callback::from(move |_: Event| {
-            c_signal.dispatch(CursorAction::ForceRerender);
-            let left = Rect::try_from(&left).unwrap_or(window.left.rect);
-            let right = Rect::try_from(&right).unwrap_or(window.right.rect);
-            window.set(WindowState::new(left, right))
-        })
-    ));
-
-    // Override the right click to toggle the magnifier
-    let handle_right_click = use_memo((), enclose!((c_signal) move |_|
-        Callback::from(move |e: MouseEvent| {
-            e.prevent_default();
-            c_signal.dispatch(CursorAction::Toggle);
-        })
-    ));
-
-    let show_magnifier = cursor.magnify;
-    let editable = *editable;
-    let settings = volume.data.magnifier;
-    let (cursor, force) = (cursor.position, cursor.force);
-    let (left, right) = (&left, &right);
-    let oncontextmenu = handle_right_click.as_ref();
-    let onkeypress = handle_keypress.as_ref();
-    let onload = on_image_load.as_ref();
-    let onmousemove = update_cursor.as_ref();
-
-    let class = classes!(editable.then(||Some("editable")));
-    Ok(html! {
-        <div ref={reader} id="Reader" {class} tabindex="0" {oncontextmenu} {onkeypress} {onmousemove}>
-            if show_magnifier {
-                <magnifier::Magnifier {cursor} {settings} {left} {right} {force}/>
+        let element = focused_element();
+        if element.is_none() || element.is_some_and(|elm| elm.tag_name() == "BODY") {
+            if let Some(elm) = self.node.cast::<HtmlElement>() {
+                gloo_console::info!("setting focus to #Reader");
+                elm.focus().expect_throw("failed to focus #Reader");
             }
+        }
+    }
 
-            if let Some(name) = left_page {
-                <page::Page {db} {volume_id} {name} node_ref={left} bbox={window.left} mutable={editable} {onload} />
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        let ReaderProps { db, .. } = ctx.props();
+        match msg {
+            ReaderMessage::Set(volume) => {
+                let previous = self.volume.replace(volume);
+                previous != self.volume
             }
-            if let Some(name) = right_page {
-                <page::Page {db} {volume_id} {name} node_ref={right} bbox={window.right} mutable={editable} {onload} />
+            ReaderMessage::MagnifierToggle => {
+                self.cursor.magnify = !self.cursor.magnify;
+                true
             }
+            ReaderMessage::MutableToggle => {
+                self.mutable = !self.mutable;
+                true
+            }
+            ReaderMessage::NextPage => {
+                if let Some(volume) = &mut self.volume {
+                    volume.page_forward();
+                    ctx.link().send_future(enclose!((db, volume) Self::commit_volume(db, volume)));
+                }
+                true
+            }
+            ReaderMessage::PrevPage => {
+                if let Some(volume) = &mut self.volume {
+                    volume.page_backward();
+                    ctx.link().send_future(enclose!((db, volume) Self::commit_volume(db, volume)));
+                }
+                true
+            }
+            ReaderMessage::Resize(force) => {
+                let left = Rect::try_from(&self.node_left).unwrap_or(self.window.left.rect);
+                let right = Rect::try_from(&self.node_right).unwrap_or(self.window.right.rect);
+                self.window = WindowState::new(left, right);
+                if force { self.cursor.force = timestamp(); }
+                true
+            }
+            ReaderMessage::UpdateCursor(x, y) => {
+                self.cursor.position = (x, y);
+                self.cursor.magnify
+            }
+        }
+    }
 
-        </div>
-    })
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        if let Some(volume) = &self.volume {
+            let ReaderProps { db, volume_id } = ctx.props();
+            let (page_right, page_left) = volume.select_pages();
+            return html! {
+                <div
+                  ref={&self.node}
+                  id="Reader"
+                  class={self.mutable.then(||Some("editable"))}
+                  tabindex="0"
+                  oncontextmenu={&self.handle_right_click}
+                  onkeypress={&self.handle_keypress}
+                  onmousemove={&self.update_cursor}
+                >
+                if self.cursor.magnify {
+                    <magnifier::Magnifier
+                        cursor={self.cursor.position}
+                        settings={volume.magnifier}
+                        left={&self.node_left}
+                        right={&self.node_right}
+                        force={&self.cursor.force}
+                    />
+                }
+
+                if let Some(name) = page_left {
+                    <page::Page
+                        {db}
+                        {volume_id}
+                        {name}
+                        node_ref={&self.node_left}
+                        bbox={self.window.left}
+                        mutable={self.mutable}
+                        onload={&self.handle_image_load}
+                    />
+                }
+                if let Some(name) = page_right {
+                    <page::Page
+                        {db}
+                        {volume_id}
+                        {name}
+                        node_ref={&self.node_right}
+                        bbox={self.window.right}
+                        mutable={self.mutable}
+                        onload={&self.handle_image_load}
+                    />
+                }
+                </div>
+            };
+        }
+        Html::default()
+    }
+}
+
+impl Reader {
+    async fn commit_volume(db: Rc<Rexie>, volume: VolumeMetadata) -> ReaderMessage {
+        let id = volume.id.expect_throw("missing volume id");
+        gloo_console::log!(format!("updating volume ({id} - {})", volume.title));
+        put_volume(&db, &volume).await
+            .expect_throw("failed to update volume in IndexedDB");
+        ReaderMessage::Set(volume)
+    }
 }
 
 mod magnifier {
@@ -441,6 +560,7 @@ mod page {
             PageMessage::Set(image, ocr)
         }
         async fn commit_ocr(db: Rc<Rexie>, id: u32, name: AttrValue, ocr: PageOcr) -> PageMessage {
+            gloo_console::log!(format!("updating OCR ({id}, {name})"));
             let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
             put_ocr(&db, &ocr, &key).await.unwrap_or_else(|error| {
                 if let AppError::RexieError(err) = error {
@@ -494,6 +614,7 @@ mod ocr {
         ondblclick: Callback<MouseEvent>,
         onmouseleave: Callback<MouseEvent>,
         onmousemove: Callback<MouseEvent>,
+        remove_focus: Callback<FocusEvent>,
     }
 
     impl Component for TextBlock {
@@ -502,6 +623,9 @@ mod ocr {
         fn create(ctx: &Context<Self>) -> Self {
             let Props { block, commit_block, .. } = ctx.props();
 
+            let begin_drag = ctx.link().callback(|e: MouseEvent| {
+                Self::Message::BeginDrag(e.client_x(), e.client_y())
+            });
             let commit_lines = {
                 let block = block.clone();
                 let commit = commit_block.clone();
@@ -515,9 +639,8 @@ mod ocr {
             let onmousemove = ctx.link().callback(|e: MouseEvent| {
                 Self::Message::UpdateDrag(e.client_x(), e.client_y())
             });
-            let begin_drag = ctx.link().callback(|e: MouseEvent| {
-                Self::Message::BeginDrag(e.client_x(), e.client_y())
-            });
+            let remove_focus =
+                ctx.link().callback(|_: FocusEvent| Self::Message::RemoveFocus);
 
             Self {
                 contenteditable: false,
@@ -529,6 +652,7 @@ mod ocr {
                 ondblclick,
                 onmouseleave,
                 onmousemove,
+                remove_focus,
             }
         }
 
@@ -578,6 +702,12 @@ mod ocr {
             }
         }
 
+        fn rendered(&mut self, _ctx: &Context<Self>, _first_render: bool) {
+            if self.should_be_focused {
+                crate::utils::web::focus(&self.node_ref);
+            }
+        }
+
         fn view(&self, ctx: &Context<Self>) -> Html {
             let Props {
                 bbox,
@@ -589,8 +719,6 @@ mod ocr {
                 oncopy,
                 ..
             } = ctx.props();
-            if self.should_be_focused { crate::utils::web::focus(&self.node_ref); }
-            // let focused = crate::utils::web::is_focused(&self.node_ref);
             let style = self.style(bbox, block, *scale);
 
             let onmouseup = {
@@ -624,9 +752,8 @@ mod ocr {
 
 
             let contenteditable = self.contenteditable.then(|| "true");
-            let noop = Callback::noop();
             let onblur =
-                if self.contenteditable { &self.commit_lines } else { &noop };
+                if self.contenteditable { &self.commit_lines } else { &self.remove_focus };
             let no_bubble = Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true));
             let noop = Callback::noop();
             let onkeydown =
@@ -732,7 +859,7 @@ mod ocr {
                     start_y: self.start_y,
                     pos_x: x,
                     pos_y: y,
-                    dirty: true,
+                    dirty: self.dirty || (self.start_x != x) || (self.start_y != y),
                 }
             }
 

@@ -59,7 +59,6 @@ mod magnifier {
 
 mod reader_state {
     use serde::{Deserialize, Serialize};
-    use yew::AttrValue;
 
     #[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
     pub struct ReaderState {
@@ -67,41 +66,11 @@ mod reader_state {
         pub single_page: bool,
         #[serde(default)]
         pub current_page: usize,
-        #[serde(default)]
+        #[serde(default = "default_first_page_is_cover")]
         pub first_page_is_cover: bool,
     }
 
-    impl ReaderState {
-        pub fn select_pages(&self, pages: &[(AttrValue, AttrValue)]) -> (Option<AttrValue>, Option<AttrValue>) {
-            let get_page = |i: usize| -> Option<AttrValue> {
-                pages.get(i).map(|p| p.0.clone())
-            };
-            if self.single_page || (self.current_page == 0 && !self.first_page_is_cover) {
-                return (get_page(self.current_page), None);
-            }
-            (get_page(self.current_page), get_page(self.current_page + 1))
-        }
-
-        pub fn forward(&mut self) {
-            if self.single_page || (self.current_page == 0 && !self.first_page_is_cover) {
-                self.current_page += 1;
-            } else {
-                self.current_page += 2;
-            }
-        }
-
-        pub fn backward(&mut self) {
-            if self.single_page || (self.current_page == 0 && !self.first_page_is_cover) {
-                if self.current_page > 0 {
-                    self.current_page -= 1;
-                }
-            } else if self.current_page == 1 {
-                self.current_page -= 1;
-            } else if self.current_page > 1 {
-                self.current_page -= 2;
-            }
-        }
-    }
+    fn default_first_page_is_cover() -> bool { true }
 }
 
 
@@ -113,6 +82,46 @@ impl<'a> VolumeMetadata {
             return page;
         }
         &self.pages[0].0
+    }
+
+    pub fn page_forward(&mut self) {
+        let ReaderState {
+            single_page, current_page, first_page_is_cover
+        } = self.reader_state;
+        let len = self.pages.len();
+        let increment = match (current_page, single_page, !first_page_is_cover) {
+            (p, _, _) if p >= (len - 1) => 0,
+            (p, _, _) if p == (len - 2) => 1,
+            (p, _, true) if p % 2 == 0 => 1,
+            (0.., true, _) => 1,
+            (0.., false, _) => 2,
+        };
+        self.reader_state.current_page += increment;
+    }
+
+    pub fn page_backward(&mut self) {
+        let ReaderState {
+            current_page, single_page, first_page_is_cover
+        } = self.reader_state;
+        let decrement = match (current_page, single_page, !first_page_is_cover) {
+            (0, _, _) => 0,
+            (1, _, _) => 1,
+            (2.., true, _) => 1,
+            (p, _, true) if p % 2 == 0 => 1,
+            (2.., false, _) => 2,
+        };
+        self.reader_state.current_page -= decrement;
+    }
+
+    pub fn select_pages(&self) -> (Option<AttrValue>, Option<AttrValue>) {
+        let get_page = |i: usize| -> Option<AttrValue> {
+            self.pages.get(i).map(|p| p.0.clone())
+        };
+        let ReaderState { single_page, current_page, first_page_is_cover } = self.reader_state;
+        if single_page || (current_page == 0 && !first_page_is_cover) {
+            return (get_page(current_page), None);
+        }
+        (get_page(current_page), get_page(current_page + 1))
     }
 }
 
