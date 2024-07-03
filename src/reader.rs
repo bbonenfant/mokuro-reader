@@ -381,7 +381,7 @@ mod page {
     use enclose::enclose;
     use rexie::Rexie;
     use wasm_bindgen::{JsCast, JsValue, UnwrapThrowExt};
-    use web_sys::{ClipboardEvent, KeyboardEvent, MouseEvent};
+    use web_sys::{ClipboardEvent, MouseEvent};
     use yew::{AttrValue, Callback, Component, Context, Event, Html, html, NodeRef, Properties};
 
     use crate::errors::AppError;
@@ -391,8 +391,6 @@ mod page {
 
     use super::drag::Drag;
     use super::window::BoundingBox;
-
-    const DELETE_PROMPT: &str = "Are you sure you want to delete this?\nThere is no undo!";
 
     #[derive(Properties, PartialEq)]
     pub struct Props {
@@ -421,8 +419,8 @@ mod page {
         ocr: PageOcr,
         url: AttrValue,
 
-        commit: Callback<Option<OcrBlock>>,
-        delete: Callback<Option<AttrValue>>,
+        commit: Callback<OcrBlock>,
+        delete: Callback<AttrValue>,
         begin_drag: Callback<MouseEvent>,
         end_drag: Callback<MouseEvent>,
         onmousemove: Callback<MouseEvent>,
@@ -433,14 +431,10 @@ mod page {
         type Properties = Props;
         type Message = PageMessage;
         fn create(ctx: &Context<Self>) -> Self {
-            let commit = ctx.link().batch_callback(
-                |block: Option<OcrBlock>|
-                block.map(|b| Self::Message::UpdateBlock(b))
-            );
-            let delete = ctx.link().batch_callback(
-                |uuid: Option<AttrValue>|
-                uuid.map(|uuid| Self::Message::DeleteBlock(uuid))
-            );
+            let commit =
+                ctx.link().callback(|block: OcrBlock| Self::Message::UpdateBlock(block));
+            let delete =
+                ctx.link().callback(|uuid: AttrValue| Self::Message::DeleteBlock(uuid));
             let begin_drag =
                 ctx.link().callback(|e: MouseEvent| Self::Message::BeginDrag(e.x(), e.y()));
             let end_drag =
@@ -566,11 +560,9 @@ mod page {
             }
 
             let Props { bbox, node_ref, onload, mutable, .. } = ctx.props();
-            let bbox = *bbox;
             let draggable = Some("false");
-            let oncopy = &self.oncopy;
             let src = &self.url;
-            let scale = self.scale(&bbox);
+            let scale = self.scale(bbox);
 
             let noop = Callback::noop();
             let dragging = *mutable && self.drag.is_some();
@@ -597,23 +589,16 @@ mod page {
                 {new_block}
                 {
                     self.ocr.blocks.iter().map(|block| {
-                        let backspace_delete = {
-                            let uuid = block.uuid.clone();
-                            self.delete.reform(
-                                move |e: KeyboardEvent| {
-                                    if e.code() == "Backspace" {
-                                        if gloo_dialogs::confirm(DELETE_PROMPT) {
-                                            return Some(uuid.clone())
-                                        }
-                                    }
-                                    None
-                                }
-                            )
-                        };
-                        let key = block.uuid.as_str();
-                        let block = block.clone();
-                        let commit_block = &self.commit;
-                        html!{<super::ocr::TextBlock {key} {mutable} {bbox} {scale} {block} {commit_block} {backspace_delete} {oncopy}/>}
+                        html!{ <super::ocr::TextBlock
+                            key={block.uuid.as_str()}
+                            {mutable}
+                            bbox={*bbox}
+                            {scale}
+                            block={block.clone()}
+                            commit_block={&self.commit}
+                            delete_block={&self.delete}
+                            oncopy={&self.oncopy}
+                        /> }
                     }).collect::<Html>()
                 }
                 </>
@@ -663,16 +648,18 @@ mod page {
 }
 
 mod ocr {
-    use wasm_bindgen::JsCast;
+    use enclose::enclose;
+    use wasm_bindgen::UnwrapThrowExt;
     use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
     use yew::{AttrValue, Callback, Component, Context, Html, html, NodeRef, Properties};
-    use yew::html::Scope;
 
     use crate::models::OcrBlock;
     use crate::utils::web::get_bounding_rect;
 
     use super::drag::Drag;
     use super::window::BoundingBox;
+
+    const DELETE_PROMPT: &str = "Are you sure you want to delete this?\nThere is no undo!";
 
     #[derive(Properties, PartialEq)]
     pub struct Props {
@@ -681,17 +668,21 @@ mod ocr {
         pub mutable: bool,
         pub scale: f64,
 
-        pub backspace_delete: Callback<KeyboardEvent>,
-        pub commit_block: Callback<Option<OcrBlock>>,
+        pub commit_block: Callback<OcrBlock>,
+        pub delete_block: Callback<AttrValue>,
         pub oncopy: Callback<Event>,
     }
 
     pub enum TextBlockMessage {
         RemoveFocus,
         EnableContentEditing,
+        IncreaseFontSize,
+        DecreaseFontSize,
         BeginDrag(i32, i32),
         UpdateDrag(i32, i32),
         EndDrag,
+        CommitLines,
+        DeleteBlock,
     }
 
     pub struct TextBlock {
@@ -702,6 +693,7 @@ mod ocr {
 
         begin_drag: Callback<MouseEvent>,
         commit_lines: Callback<FocusEvent>,
+        handle_keypress: Callback<KeyboardEvent>,
         ondblclick: Callback<MouseEvent>,
         onmouseleave: Callback<MouseEvent>,
         onmousemove: Callback<MouseEvent>,
@@ -712,24 +704,28 @@ mod ocr {
         type Properties = Props;
         type Message = TextBlockMessage;
         fn create(ctx: &Context<Self>) -> Self {
-            let Props { block, commit_block, .. } = ctx.props();
-
-            let begin_drag = ctx.link().callback(|e: MouseEvent| {
-                Self::Message::BeginDrag(e.client_x(), e.client_y())
+            let begin_drag =
+                ctx.link().callback(|e: MouseEvent| Self::Message::BeginDrag(e.x(), e.y()));
+            let commit_lines =
+                ctx.link().callback(|_: FocusEvent| Self::Message::CommitLines);
+            let handle_keypress = ctx.link().batch_callback(|e: KeyboardEvent| {
+                match e.code().as_str() {
+                    "Backspace" => {
+                        if gloo_dialogs::confirm(DELETE_PROMPT) {
+                            Some(Self::Message::DeleteBlock)
+                        } else { None }
+                    }
+                    "Minus" => Some(Self::Message::DecreaseFontSize),
+                    "Equal" => Some(Self::Message::IncreaseFontSize),
+                    _ => None,
+                }
             });
-            let commit_lines = {
-                let block = block.clone();
-                let commit = commit_block.clone();
-                let link = ctx.link().clone();
-                commit.reform(Self::new_commit_lines(link, block))
-            };
             let ondblclick =
                 ctx.link().callback(|_: MouseEvent| Self::Message::EnableContentEditing);
             let onmouseleave =
                 ctx.link().callback(|_: MouseEvent| Self::Message::EndDrag);
-            let onmousemove = ctx.link().callback(|e: MouseEvent| {
-                Self::Message::UpdateDrag(e.client_x(), e.client_y())
-            });
+            let onmousemove =
+                ctx.link().callback(|e: MouseEvent| Self::Message::UpdateDrag(e.x(), e.y()));
             let remove_focus =
                 ctx.link().callback(|_: FocusEvent| Self::Message::RemoveFocus);
 
@@ -740,24 +736,12 @@ mod ocr {
                 should_be_focused: false,
                 begin_drag,
                 commit_lines,
+                handle_keypress,
                 ondblclick,
                 onmouseleave,
                 onmousemove,
                 remove_focus,
             }
-        }
-
-        fn changed(&mut self, ctx: &Context<Self>, previous: &Self::Properties) -> bool {
-            let Props { block, commit_block, .. } = ctx.props();
-            if block != &previous.block || commit_block != &previous.commit_block {
-                self.commit_lines = {
-                    let block = block.clone();
-                    let commit = commit_block.clone();
-                    let link = ctx.link().clone();
-                    commit.reform(Self::new_commit_lines(link, block))
-                };
-            }
-            true
         }
 
         fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -772,6 +756,18 @@ mod ocr {
                 Self::Message::EnableContentEditing => {
                     self.contenteditable = true;
                     true
+                }
+                Self::Message::IncreaseFontSize => {
+                    let mut block = ctx.props().block.clone();
+                    block.font_size += 1;
+                    ctx.props().commit_block.emit(block);
+                    false
+                }
+                Self::Message::DecreaseFontSize => {
+                    let mut block = ctx.props().block.clone();
+                    block.font_size -= 1;
+                    ctx.props().commit_block.emit(block);
+                    false
                 }
                 Self::Message::BeginDrag(x, y) => {
                     self.should_be_focused = true;
@@ -821,6 +817,24 @@ mod ocr {
                         true
                     } else { false }
                 }
+                Self::Message::CommitLines => {
+                    let mut block = ctx.props().block.clone();
+                    let children = self.html_element().children();
+                    let lines: Vec<AttrValue> = (0..children.length()).filter_map(|idx|
+                    children.item(idx).unwrap().text_content().map(|t| t.into())
+                    ).collect();
+                    if lines != block.lines {
+                        block.lines = lines;
+                        ctx.props().commit_block.emit(block);
+                    }
+                    ctx.link().send_message(TextBlockMessage::RemoveFocus);
+                    false
+                }
+                Self::Message::DeleteBlock => {
+                    let Props { block, delete_block, .. } = ctx.props();
+                    delete_block.emit(block.uuid.clone());
+                    false
+                }
             }
         }
 
@@ -836,46 +850,36 @@ mod ocr {
                 block,
                 mutable,
                 scale,
-                backspace_delete,
                 commit_block,
                 oncopy,
                 ..
             } = ctx.props();
             let style = self.style(bbox, block, *scale);
 
-            let onmouseup = {
-                let bbox = bbox.clone();
-                let block = block.clone();
-                let link = ctx.link().clone();
-                let node = self.node_ref.clone();
-                let scale = *scale;
-                commit_block.reform(move |_| {
+            let node = self.node_ref.clone();
+            let onmouseup = enclose!((bbox, block, commit_block, scale)
+                ctx.link().callback(move |_: MouseEvent| {
                     let rect = get_bounding_rect(&node);
                     let left = ((rect.left() - bbox.rect.left) * scale).round();
                     let right = (rect.width() * scale).round() + left;
                     let top = ((rect.top() - bbox.rect.top) * scale).round();
                     let bottom = (rect.height() * scale).round() + top;
                     let box_ = (left as u32, top as u32, right as u32, bottom as u32);
-
-                    link.send_message(Self::Message::EndDrag);
-                    if box_ == block.box_ { return None; }
-                    Some(OcrBlock {
-                        uuid: block.uuid.clone(),
-                        box_,
-                        vertical: block.vertical,
-                        font_size: block.font_size,
-                        lines: block.lines.clone(),
-                    })
+                    if box_ != block.box_ {
+                        let mut block = block.clone();
+                        block.box_ = box_;
+                        commit_block.emit(block.to_owned());
+                    }
+                    Self::Message::EndDrag
                 })
-            };
+            );
 
-            let contenteditable = self.contenteditable.then(|| "true");
             let onblur =
                 if self.contenteditable { &self.commit_lines } else { &self.remove_focus };
             let no_bubble = Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true));
             let noop = Callback::noop();
             let onkeydown =
-                if *mutable && !self.contenteditable { backspace_delete } else { &noop };
+                if *mutable && !self.contenteditable { &self.handle_keypress } else { &noop };
             let onkeypress =
                 if self.contenteditable { &no_bubble } else { &noop };
             let noop = Callback::noop();
@@ -888,7 +892,8 @@ mod ocr {
                   ref={&self.node_ref}
                   key={block.uuid.as_str()}
                   class={"ocr-block"}
-                  {contenteditable} {style} tabindex={"-1"}
+                  contenteditable={self.contenteditable.then(|| "true")}
+                  {style} tabindex={"-1"}
                   {onblur}
                   {oncopy}
                   ondblclick={&self.ondblclick}
@@ -902,23 +907,9 @@ mod ocr {
     }
 
     impl TextBlock {
-        fn new_commit_lines(link: Scope<Self>, block: OcrBlock) -> impl Fn(FocusEvent) -> Option<OcrBlock> {
-            move |e: FocusEvent| {
-                link.send_message(TextBlockMessage::RemoveFocus);
-                let target = e.target().unwrap();
-                let div = target.dyn_ref::<web_sys::HtmlElement>().unwrap();
-                let children = div.children();
-                let mut lines = vec![];
-                for index in 0..children.length() {
-                    let child = children.item(index).unwrap();
-                    if let Some(text) = child.text_content() {
-                        lines.push(AttrValue::from(text))
-                    }
-                }
-                (lines != block.lines).then(
-                    || OcrBlock { uuid: block.uuid.clone(), lines, ..block }
-                )
-            }
+        fn html_element(&self) -> web_sys::HtmlElement {
+            self.node_ref.cast::<web_sys::HtmlElement>()
+                .expect_throw("could not resolve node reference")
         }
 
         fn style(&self, bbox: &BoundingBox, block: &OcrBlock, scale: f64) -> String {
@@ -953,6 +944,7 @@ mod ocr {
             let font = (block.font_size as f64) / scale;
             let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
             s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
+            s.push_str("line-height: 1.5; ");
             if self.drag.is_some_and(|d| d.dirty()) {
                 s.push_str("opacity: 50%; ");
             }
