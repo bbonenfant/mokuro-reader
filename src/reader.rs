@@ -11,7 +11,7 @@ use crate::reader::window::{Rect, WindowState};
 use crate::utils::{
     db::{get_volume, put_volume},
     timestamp,
-    web::{focused_element, window},
+    web::{focus, focused_element, window},
 };
 
 #[derive(Default)]
@@ -29,6 +29,8 @@ pub struct ReaderProps {
 
 pub enum ReaderMessage {
     Set(VolumeMetadata),
+    Focus,
+    HelpToggle,
     MagnifierToggle,
     MutableToggle,
     NextPage,
@@ -45,7 +47,9 @@ pub struct Reader {
     node_right: NodeRef,
     volume: Option<VolumeMetadata>,
     window: WindowState,
+    show_help: bool,
 
+    focus: Callback<()>,
     handle_keypress: Callback<KeyboardEvent>,
     handle_image_load: Callback<Event>,
     handle_right_click: Callback<MouseEvent>,
@@ -68,11 +72,13 @@ impl Component for Reader {
             )
         };
 
+        let focus = ctx.link().callback(|()| Self::Message::Focus);
         let handle_keypress = ctx.link().batch_callback(
             |e: KeyboardEvent| {
                 // gloo_console::log!("KeyCode:", e.code());
                 match e.code().as_str() {
                     "KeyE" => Some(Self::Message::MutableToggle),
+                    "KeyH" => Some(Self::Message::HelpToggle),
                     "KeyX" => Some(Self::Message::PrevPage),
                     "KeyZ" => Some(Self::Message::NextPage),
                     _ => None
@@ -100,6 +106,8 @@ impl Component for Reader {
             node_right: NodeRef::default(),
             volume: None,
             window,
+            show_help: false,
+            focus,
             handle_keypress,
             handle_image_load,
             handle_right_click,
@@ -116,7 +124,7 @@ impl Component for Reader {
                     .expect_throw("failed to get volume from IndexedDB");
                 Self::Message::Set(volume)
             }))
-        }
+        } else { gloo_console::debug!("Rerender Reader") }
 
         let element = focused_element();
         if element.is_none() || element.is_some_and(|elm| elm.tag_name() == "BODY") {
@@ -125,6 +133,9 @@ impl Component for Reader {
                 elm.focus().expect_throw("failed to focus #Reader");
             }
         }
+
+        // On every rerender, check to see if the image proportions has changed.
+        ctx.link().send_message(Self::Message::Resize(false));
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -133,6 +144,14 @@ impl Component for Reader {
             ReaderMessage::Set(volume) => {
                 let previous = self.volume.replace(volume);
                 previous != self.volume
+            }
+            ReaderMessage::Focus => {
+                focus(&self.node);
+                false
+            }
+            ReaderMessage::HelpToggle => {
+                self.show_help = !self.show_help;
+                true
             }
             ReaderMessage::MagnifierToggle => {
                 self.cursor.magnify = !self.cursor.magnify;
@@ -145,23 +164,30 @@ impl Component for Reader {
             ReaderMessage::NextPage => {
                 if let Some(volume) = &mut self.volume {
                     volume.page_forward();
-                    ctx.link().send_future(enclose!((db, volume) Self::commit_volume(db, volume)));
+                    ctx.link().send_future(
+                        enclose!((db, volume) Self::commit_volume(db, volume))
+                    );
                 }
                 true
             }
             ReaderMessage::PrevPage => {
                 if let Some(volume) = &mut self.volume {
                     volume.page_backward();
-                    ctx.link().send_future(enclose!((db, volume) Self::commit_volume(db, volume)));
+                    ctx.link().send_future(
+                        enclose!((db, volume) Self::commit_volume(db, volume))
+                    );
                 }
                 true
             }
             ReaderMessage::Resize(force) => {
                 let left = Rect::try_from(&self.node_left).unwrap_or(self.window.left.rect);
                 let right = Rect::try_from(&self.node_right).unwrap_or(self.window.right.rect);
-                self.window = WindowState::new(left, right);
-                if force { self.cursor.force = timestamp(); }
-                true
+                if left != self.window.left.rect || right != self.window.right.rect || force {
+                    self.cursor.force = timestamp();
+                    self.window = WindowState::new(left, right);
+                    return true;
+                }
+                false
             }
             ReaderMessage::UpdateCursor(x, y) => {
                 self.cursor.position = (x, y);
@@ -175,6 +201,7 @@ impl Component for Reader {
             let ReaderProps { db, volume_id } = ctx.props();
             let (page_right, page_left) = volume.select_pages();
             return html! {
+                <div id="ReaderContainer">
                 <div
                   ref={&self.node}
                   id="Reader"
@@ -203,6 +230,7 @@ impl Component for Reader {
                         bbox={self.window.left}
                         mutable={self.mutable}
                         onload={&self.handle_image_load}
+                        focus_reader={&self.focus}
                     />
                 }
                 if let Some(name) = page_right {
@@ -214,12 +242,27 @@ impl Component for Reader {
                         bbox={self.window.right}
                         mutable={self.mutable}
                         onload={&self.handle_image_load}
+                        focus_reader={&self.focus}
                     />
                 }
+                </div>
+                if self.show_help {{help(self.mutable)}}
                 </div>
             };
         }
         Html::default()
+    }
+}
+
+fn help(editing: bool) -> Html {
+    const HELP: &str =
+        "H - Toggle Help | Z - Next Page | X - Previous Page | E - Toggle Editing ";
+    const EDITING: &str =
+        "\"-\" - Decrease Font | \"+\" - Increase Font | BACKSPACE - Delete Textbox";
+    html! {
+        <span id="HelpBanner">
+            {if editing {format!("{HELP} | {EDITING}")} else {HELP.to_owned()} }
+        </span>
     }
 }
 
@@ -257,7 +300,7 @@ mod magnifier {
             *style.borrow_mut() = value;
         }
         let style = style.borrow().to_string();
-        html! {<div id="Magnifier" class="magnifier" {style}/>}
+        html! {<div id="Magnifier" {style}/>}
     }
 
     #[derive(Clone, Default, PartialEq)]
@@ -401,6 +444,7 @@ mod page {
         pub bbox: BoundingBox,
         pub mutable: bool,
         pub onload: Callback<Event>,
+        pub focus_reader: Callback<()>,
     }
 
     pub enum PageMessage {
@@ -501,6 +545,7 @@ mod page {
                     ctx.link().send_future(enclose!(
                         (db, volume_id => id, name) Self::commit_ocr(db, id, name, ocr)
                     ));
+                    ctx.props().focus_reader.emit(());
                     true
                 }
                 PageMessage::UpdateBlock(block) => {
@@ -551,7 +596,7 @@ mod page {
                 ctx.link().send_future(enclose!(
                     (db, volume_id => id, name) Self::fetch(db, id, name)
                 ))
-            }
+            } else { gloo_console::debug!("Rerender", ctx.props().name.as_str()) }
         }
 
         fn view(&self, ctx: &Context<Self>) -> Html {

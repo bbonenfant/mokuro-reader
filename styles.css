@@ -147,88 +147,104 @@ input#file-upload {
     }
 }
 
-#Reader {
+#ReaderContainer {
     height: 100vh;
-    padding: 10px;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
 
-    display: flex;
-    flex-flow: nowrap;
-    align-items: center;
-    justify-content: center;
+    #Reader {
+        grid-row: 1 / 2;
+        /*height: 100vh;*/
+        padding: 10px;
 
-    .reader-image {
-        max-height: 100%;
-        max-width: 50%;
+        display: flex;
+        flex-flow: nowrap;
+        align-items: center;
+        justify-content: center;
 
-        -webkit-user-select: none;
-        user-select: none;
-
-        &:only-of-type {
-            /* if only displaying a single page, make it full width */
-            max-width: 100%;
-        }
-    }
-
-    &.editable .reader-image {
-        cursor: crosshair;
-    }
-
-    .new-ocr-block {
-        position: absolute;
-        cursor: crosshair;
-        background-color: lightgray;
-        outline: 1px solid darkgray;
-        opacity: 50%;
-        pointer-events: none;
-    }
-
-    &.editable .ocr-block {
-        background-color: lightgray;
-
-        &[contenteditable="true"] {
-            outline: 2px solid red;
+        &:focus {
+            outline: none;
         }
 
-        &:not([contenteditable="true"]) {
-            cursor: pointer;
-            outline: 1px solid darkgray;
+        .reader-image {
+            max-height: 100%;
+            max-width: 50%;
+
+            -webkit-user-select: none;
             user-select: none;
 
-            &:focus {
-                cursor: move;
-                outline: 2px solid red;
-                overflow: hidden;
-                resize: both;
-                z-index: 5;
+            &:only-of-type {
+                /* if only displaying a single page, make it full width */
+                max-width: 100%;
             }
         }
+
+        &.editable .reader-image {
+            cursor: crosshair;
+        }
+
+        .new-ocr-block {
+            position: absolute;
+            cursor: crosshair;
+            background-color: lightgray;
+            outline: 1px solid darkgray;
+            opacity: 50%;
+            pointer-events: none;
+        }
+
+        .ocr-block {
+            position: absolute;
+            color: black;
+
+            > p {
+                background-color: white;
+                display: table;
+                margin: 0;
+                opacity: 0;
+                padding-inline: 2px;
+                white-space: nowrap;
+            }
+
+            &:hover > p, &:focus > p {
+                opacity: 1
+            }
+        }
+
+        &.editable .ocr-block {
+            /*background-color: lightgray;*/
+
+            &[contenteditable="true"] {
+                outline: 2px solid red;
+            }
+
+            &:not([contenteditable="true"]) {
+                cursor: pointer;
+                outline: 2px ridge darkgray;
+                user-select: none;
+
+                &:focus {
+                    cursor: move;
+                    outline: 2px solid red;
+                    overflow: hidden;
+                    resize: both;
+                    z-index: 5;
+                }
+            }
+        }
+
+        #Magnifier {
+            position: absolute;
+            border: 1px solid #000;
+            cursor: none;
+            z-index: 10;
+        }
     }
-}
 
-
-.magnifier {
-    position: absolute;
-    border: 1px solid #000;
-    cursor: none;
-    z-index: 10;
-}
-
-.ocr-block {
-    position: absolute;
-    color: black;
-    /*overflow: hidden;*/
-    /*resize: both;*/
-
-    > p {
-        background-color: white;
-        display: table;
-        margin: 0;
-        opacity: 0;
-        padding-inline: 2px;
-        white-space: nowrap;
-    }
-
-    &:hover > p, &:focus > p {
-        opacity: 1
+    #HelpBanner {
+        grid-row: 2 / 3;
+        font-size: 15px;
+        height: 20px;
+        margin-left: 20px;
+        overflow-block: scroll;
     }
 }
