@@ -16,6 +16,7 @@ mod errors;
 mod upload;
 mod home;
 mod reader;
+mod icons;
 
 #[function_component(App)]
 fn app() -> Html {

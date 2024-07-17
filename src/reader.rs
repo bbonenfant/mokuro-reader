@@ -201,7 +201,7 @@ impl Component for Reader {
             let ReaderProps { db, volume_id } = ctx.props();
             let (page_right, page_left) = volume.select_pages();
             return html! {
-                <div id="ReaderContainer">
+            <div id="ReaderGrid">
                 <div
                   ref={&self.node}
                   id="Reader"
@@ -220,6 +220,11 @@ impl Component for Reader {
                         force={&self.cursor.force}
                     />
                 }
+
+                {sidebar(
+                    self.window.left.rect.height as u32,
+                    ctx.link().callback(|_| Self::Message::NextPage),
+                )}
 
                 if let Some(name) = page_left {
                     <page::Page
@@ -245,12 +250,32 @@ impl Component for Reader {
                         focus_reader={&self.focus}
                     />
                 }
+
+                {sidebar(
+                    self.window.right.rect.height as u32,
+                    ctx.link().callback(|_| Self::Message::PrevPage),
+                )}
+
                 </div>
                 if self.show_help {{help(self.mutable)}}
-                </div>
+            </div>
             };
         }
         Html::default()
+    }
+}
+
+fn sidebar(
+    height: u32,
+    move_page: Callback<MouseEvent>,
+) -> Html {
+    let style = format!("height: {height}px; ");
+    html! {
+        <div class="sidebar" {style}>
+            <button onclick={move_page}>
+                {crate::icons::chevron()}
+            </button>
+        </div>
     }
 }
 
@@ -694,11 +719,12 @@ mod page {
 
 mod ocr {
     use enclose::enclose;
-    use wasm_bindgen::UnwrapThrowExt;
+    use wasm_bindgen::{JsCast, UnwrapThrowExt};
     use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
     use yew::{AttrValue, Callback, Component, Context, Html, html, NodeRef, Properties};
 
     use crate::models::OcrBlock;
+    use crate::utils::timestamp;
     use crate::utils::web::get_bounding_rect;
 
     use super::drag::Drag;
@@ -735,6 +761,7 @@ mod ocr {
         drag: Option<Drag>,
         node_ref: NodeRef,
         should_be_focused: bool,
+        stamp: u64,  // timestamp (used to force redraws)
 
         begin_drag: Callback<MouseEvent>,
         commit_lines: Callback<FocusEvent>,
@@ -779,6 +806,7 @@ mod ocr {
                 drag: None,
                 node_ref: NodeRef::default(),
                 should_be_focused: false,
+                stamp: timestamp(),
                 begin_drag,
                 commit_lines,
                 handle_keypress,
@@ -865,10 +893,27 @@ mod ocr {
                 Self::Message::CommitLines => {
                     let mut block = ctx.props().block.clone();
                     let children = self.html_element().children();
-                    let lines: Vec<AttrValue> = (0..children.length()).filter_map(|idx|
-                    children.item(idx).unwrap().text_content().map(|t| t.into())
-                    ).collect();
-                    if lines != block.lines {
+
+                    // Grab the lines from only the <p> nodes. This may be overly restrictive.
+                    // TODO: Check how browsers handle newlines in contenteditable nodes.
+                    let mut lines: Vec<AttrValue> = (0..children.length())
+                        .map(|idx| children.item(idx).unwrap())
+                        .filter(|elm| elm.tag_name() == "P")
+                        .filter_map(|elm| elm.text_content().map(|t| t.into()))
+                        .collect();
+
+                    // This is in case the user writes to the div node directly instead of
+                    // writing to a <p> node. This can happen if the user deletes all
+                    // the <p> nodes.
+                    if let Some(node) = self.html_element().child_nodes().get(0) {
+                        if node.node_type() == web_sys::Node::TEXT_NODE {
+                            if let Some(text) = node.text_content() {
+                                lines.insert(0, text.into())
+                            }
+                        }
+                    }
+                    if lines != block.lines || lines.is_empty() {
+                        self.stamp = timestamp();  // Use this to force redraw.
                         block.lines = lines;
                         ctx.props().commit_block.emit(block);
                     }
@@ -885,7 +930,11 @@ mod ocr {
 
         fn rendered(&mut self, _ctx: &Context<Self>, _first_render: bool) {
             if self.should_be_focused {
-                crate::utils::web::focus(&self.node_ref);
+                // Focus on the first <p> tag. This minimizes the chance that the
+                // user will write text to the <div> tag.
+                self.html_element().children().get_with_index(0).map(|elm|
+                elm.dyn_into::<web_sys::HtmlElement>().unwrap().focus().ok()
+                );
             }
         }
 
@@ -935,7 +984,7 @@ mod ocr {
             html! {
                 <div
                   ref={&self.node_ref}
-                  key={block.uuid.as_str()}
+                  key={format!("{}-{}", block.uuid.as_str(), self.stamp)}
                   class={"ocr-block"}
                   contenteditable={self.contenteditable.then(|| "true")}
                   {style} tabindex={"-1"}
@@ -945,7 +994,13 @@ mod ocr {
                   {onkeydown} {onkeypress} {onmouseup} {onmousedown} {onmousemove}
                   onmouseleave={&self.onmouseleave}
                 >
-                    {block.lines.iter().map(|line| html!{<p>{line}</p>}).collect::<Html>()}
+                    {if block.lines.iter().all(|line| line.trim().is_empty()) {
+                        html!{<p>{"placeholder"}</p>}
+                    } else {
+                        block.lines.iter().map(
+                            |line| html!{<p>{line}</p>}
+                        ).collect::<Html>()
+                    }}
                 </div>
             }
         }
@@ -1019,7 +1074,7 @@ mod drag {
                 start_y: self.start_y,
                 pos_x: x,
                 pos_y: y,
-                dirty: self.dirty || (self.start_x != x) || (self.start_y != y),
+                dirty: self.dirty || ((self.start_x - x).abs() > 2) || ((self.start_y - y).abs() > 2),
             }
         }
 
@@ -1029,7 +1084,7 @@ mod drag {
                 start_y: self.start_y,
                 pos_x: x,
                 pos_y: self.pos_y,
-                dirty: self.dirty || (self.start_x != x),
+                dirty: self.dirty || ((self.start_x - x).abs() > 2),
             }
         }
 
@@ -1039,7 +1094,7 @@ mod drag {
                 start_y: self.start_y,
                 pos_x: self.pos_x,
                 pos_y: y,
-                dirty: self.dirty || (self.start_y != y),
+                dirty: self.dirty || ((self.start_y - y).abs() > 2),
             }
         }
 

@@ -1,5 +1,6 @@
 :root {
-    --background-color: #2d3131
+    --background-color: #2d3131;
+    --page-button-width: 35px;
 }
 
 * {
@@ -147,12 +148,14 @@ input#file-upload {
     }
 }
 
-#ReaderContainer {
+#ReaderGrid {
     height: 100vh;
     display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-rows: minmax(0, 1fr) auto;
 
     #Reader {
+        grid-column: 2 / 3;
         grid-row: 1 / 2;
         /*height: 100vh;*/
         padding: 10px;
@@ -166,9 +169,34 @@ input#file-upload {
             outline: none;
         }
 
+        .sidebar {
+            height: 100%;
+            width: var(--page-button-width);
+
+            button {
+                height: 100%;
+                width: 100%;
+                background-color: var(--background-color);
+                border: 0;
+                box-shadow: 0 0 0 1px #222222;
+                filter: brightness(125%);
+                outline: 0;
+                padding: 0;
+                transition: 0.3s filter ease, 0.3s -webkit-filter ease;
+
+                &:hover {
+                    filter: brightness(150%);;
+                }
+            }
+        }
+
+        .sidebar:first-of-type {
+            transform: scale(-1, 1);
+        }
+
         .reader-image {
             max-height: 100%;
-            max-width: 50%;
+            max-width: calc(50% - var(--page-button-width));
 
             -webkit-user-select: none;
             user-select: none;
@@ -234,17 +262,22 @@ input#file-upload {
 
         #Magnifier {
             position: absolute;
+            background-color: var(--background-color);
             border: 1px solid #000;
             cursor: none;
             z-index: 10;
         }
+
     }
 
     #HelpBanner {
+        grid-column: 2 / 3;
         grid-row: 2 / 3;
         font-size: 15px;
         height: 20px;
-        margin-left: 20px;
-        overflow-block: scroll;
+        margin-inline: 20px;
+        overflow-x: scroll;
+        scrollbar-width: none;
+        white-space: nowrap;
     }
 }
