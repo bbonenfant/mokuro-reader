@@ -19,10 +19,16 @@ pub struct VolumeMetadata {
 
     cover: Option<AttrValue>,
     #[serde(default)]
+    pub hide_sidebar: bool,
+    #[serde(default = "default_line_height")]
+    pub line_height: f64,
+    #[serde(default)]
     pub magnifier: MagnifierSettings,
     #[serde(default)]
     pub reader_state: ReaderState,
 }
+
+fn default_line_height() -> f64 { 1.0f64 }
 
 mod magnifier {
     use serde::{Deserialize, Serialize};
@@ -89,7 +95,7 @@ impl<'a> VolumeMetadata {
             single_page, current_page, first_page_is_cover
         } = self.reader_state;
         let len = self.pages.len();
-        let increment = match (current_page, single_page, !first_page_is_cover) {
+        let increment = match (current_page, single_page, first_page_is_cover) {
             (p, _, _) if p >= (len - 1) => 0,
             (p, _, _) if p == (len - 2) => 1,
             (p, _, true) if p % 2 == 0 => 1,
@@ -103,7 +109,7 @@ impl<'a> VolumeMetadata {
         let ReaderState {
             current_page, single_page, first_page_is_cover
         } = self.reader_state;
-        let decrement = match (current_page, single_page, !first_page_is_cover) {
+        let decrement = match (current_page, single_page, first_page_is_cover) {
             (0, _, _) => 0,
             (1, _, _) => 1,
             (2.., true, _) => 1,
@@ -118,7 +124,7 @@ impl<'a> VolumeMetadata {
             self.pages.get(i).map(|p| p.0.clone())
         };
         let ReaderState { single_page, current_page, first_page_is_cover } = self.reader_state;
-        if single_page || (current_page == 0 && !first_page_is_cover) {
+        if single_page || (current_page == 0 && first_page_is_cover) {
             return (get_page(current_page), None);
         }
         (get_page(current_page), get_page(current_page + 1))

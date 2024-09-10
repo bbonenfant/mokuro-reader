@@ -2,15 +2,15 @@ use std::rc::Rc;
 
 use rexie::Rexie;
 use web_sys::MouseEvent;
-use yew::{AttrValue, Callback, function_component, html, Html, HtmlResult, use_mut_ref, use_state};
-use yew::suspense::{Suspense, use_future_with};
+use yew::suspense::{use_future_with, Suspense};
+use yew::{function_component, html, use_mut_ref, use_state, AttrValue, Callback, Html, HtmlResult};
 use yew_autoprops::autoprops;
 use yew_router::prelude::Link;
 
-use crate::Route;
-use crate::upload::UploadModal;
+use crate::upload::{DownloadButton, UploadModal};
 use crate::utils::db::{get_all_volumes, get_page};
 use crate::utils::timestamp;
+use crate::Route;
 
 #[autoprops]
 #[function_component(Home)]
@@ -81,11 +81,14 @@ fn gallery_volume(db: &Rc<Rexie>, volume_id: u32, title: AttrValue, cover: AttrV
     *state.borrow_mut() = Some(object_url);
 
     Ok(html! {
-        <Link<Route> to={Route::Reader {volume_id}}>
-            <div id="VolumeCover">
-                <img {src} alt={&title}/>
-                <p>{title}</p>
-            </div>
-        </Link<Route>>
+        <div class="volume-item">
+            <Link<Route> to={Route::Reader {volume_id}}>
+                <div class="volume-cover">
+                    <img {src} alt={&title}/>
+                    <p>{title}</p>
+                </div>
+            </Link<Route>>
+            <DownloadButton db={db.clone()} {volume_id}/>
+        </div>
     })
 }

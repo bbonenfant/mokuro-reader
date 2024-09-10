@@ -43,6 +43,24 @@ pub fn get_selection() -> Option<web_sys::Selection> {
     window().get_selection().ok().flatten()
 }
 
+/// Attempts to set the caret (text cursor) at the start of the
+/// contenteditable element.
+pub fn set_caret(node: &yew::NodeRef) {
+    let element = node.cast::<web_sys::HtmlElement>()
+        .expect_throw("Could not resolve node reference");
+
+    let range = document().create_range().unwrap_throw();
+    element.child_nodes().get(0).map(|child| {
+        range.set_start(&child, 0).unwrap_throw();
+        range.collapse_with_to_start(true);
+
+        window().get_selection().unwrap_throw().map(|selection| {
+            selection.remove_all_ranges().unwrap_throw();
+            selection.add_range(&range).unwrap_throw();
+        })
+    });
+}
+
 #[inline(always)]
 pub fn focus(node: &yew::NodeRef) -> bool {
     node.cast::<web_sys::HtmlElement>()
@@ -59,4 +77,24 @@ pub fn is_focused(node: &yew::NodeRef) -> bool {
     let element = node.cast::<web_sys::Element>()
         .expect_throw("Could not resolve node reference");
     focused_element().is_some_and(|elm| elm == element)
+}
+
+pub fn get_input_bool(node: &yew::NodeRef) -> Option<bool> {
+    node.cast::<web_sys::HtmlInputElement>()
+        .and_then(|elm| Some(elm.checked()))
+}
+
+pub fn get_input_f64(node: &yew::NodeRef) -> Option<f64> {
+    node.cast::<web_sys::HtmlInputElement>()
+        .and_then(|elm| elm.check_validity().then_some(elm.value_as_number()))
+}
+
+pub fn get_input_u16(node: &yew::NodeRef) -> Option<u16> {
+    node.cast::<web_sys::HtmlInputElement>()
+        .and_then(|elm| elm.check_validity().then_some(elm.value_as_number() as u16))
+}
+
+pub fn get_input_u8(node: &yew::NodeRef) -> Option<u8> {
+    node.cast::<web_sys::HtmlInputElement>()
+        .and_then(|elm| elm.check_validity().then_some(elm.value_as_number() as u8))
 }

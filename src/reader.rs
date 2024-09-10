@@ -4,7 +4,7 @@ use enclose::enclose;
 use rexie::Rexie;
 use wasm_bindgen::UnwrapThrowExt;
 use web_sys::{Event, HtmlElement, KeyboardEvent, MouseEvent};
-use yew::{Callback, Component, Context, html, Html, NodeRef, Properties};
+use yew::{html, Callback, Component, Context, Html, NodeRef, Properties};
 
 use crate::models::VolumeMetadata;
 use crate::reader::window::{Rect, WindowState};
@@ -29,10 +29,12 @@ pub struct ReaderProps {
 
 pub enum ReaderMessage {
     Set(VolumeMetadata),
+    Commit(sidebar::SidebarData),
     Focus,
     HelpToggle,
     MagnifierToggle,
     MutableToggle,
+    SidebarToggle,
     NextPage,
     PrevPage,
     Resize(bool),
@@ -48,11 +50,14 @@ pub struct Reader {
     volume: Option<VolumeMetadata>,
     window: WindowState,
     show_help: bool,
+    sidebar_expanded: bool,
 
+    commit_sidebar_data: Callback<sidebar::SidebarData>,
     focus: Callback<()>,
     handle_keypress: Callback<KeyboardEvent>,
     handle_image_load: Callback<Event>,
     handle_right_click: Callback<MouseEvent>,
+    toggle_sidebar: Callback<MouseEvent>,
     update_cursor: Callback<MouseEvent>,
     _resize_listener: gloo_events::EventListener,
 }
@@ -72,13 +77,16 @@ impl Component for Reader {
             )
         };
 
+        let commit_sidebar_data =
+            ctx.link().callback(|data| Self::Message::Commit(data));
         let focus = ctx.link().callback(|()| Self::Message::Focus);
         let handle_keypress = ctx.link().batch_callback(
             |e: KeyboardEvent| {
-                // gloo_console::log!("KeyCode:", e.code());
+                gloo_console::log!("KeyCode:", e.code());
                 match e.code().as_str() {
                     "KeyE" => Some(Self::Message::MutableToggle),
                     "KeyH" => Some(Self::Message::HelpToggle),
+                    "KeyS" => Some(Self::Message::SidebarToggle),
                     "KeyX" => Some(Self::Message::PrevPage),
                     "KeyZ" => Some(Self::Message::NextPage),
                     _ => None
@@ -91,7 +99,10 @@ impl Component for Reader {
             e.prevent_default();
             Self::Message::MagnifierToggle
         });
-
+        let toggle_sidebar = ctx.link().callback(|e: MouseEvent| {
+            e.prevent_default();
+            Self::Message::SidebarToggle
+        });
         let update_cursor = ctx.link().callback(
             |e: MouseEvent| Self::Message::UpdateCursor(e.x(), e.y())
         );
@@ -107,10 +118,13 @@ impl Component for Reader {
             volume: None,
             window,
             show_help: false,
+            sidebar_expanded: false,
+            commit_sidebar_data,
             focus,
             handle_keypress,
             handle_image_load,
             handle_right_click,
+            toggle_sidebar,
             update_cursor,
             _resize_listener,
         }
@@ -145,6 +159,40 @@ impl Component for Reader {
                 let previous = self.volume.replace(volume);
                 previous != self.volume
             }
+            ReaderMessage::Commit(data) => {
+                let sidebar::SidebarData {
+                    first_page_is_cover,
+                    hide_sidebar,
+                    line_height,
+                    magnifier_height,
+                    magnifier_width,
+                    magnifier_radius,
+                    magnification,
+                    show_help,
+                    show_magnifier,
+                } = data;
+                self.show_help = show_help;
+                if show_magnifier && !self.cursor.magnify {
+                    self.cursor.position = (
+                        (self.window.screen.width / 2.0) as i32,
+                        (self.window.screen.height / 2.0) as i32,
+                    );
+                }
+                self.cursor.magnify = show_magnifier;
+                if let Some(volume) = &mut self.volume {
+                    volume.hide_sidebar = hide_sidebar;
+                    volume.line_height = line_height;
+                    volume.magnifier.height = magnifier_height;
+                    volume.magnifier.width = magnifier_width;
+                    volume.magnifier.radius = magnifier_radius;
+                    volume.magnifier.zoom = magnification;
+                    volume.reader_state.first_page_is_cover = first_page_is_cover;
+                    ctx.link().send_future(
+                        enclose!((db, volume) Self::commit_volume(db, volume))
+                    );
+                }
+                true
+            }
             ReaderMessage::Focus => {
                 focus(&self.node);
                 false
@@ -159,6 +207,10 @@ impl Component for Reader {
             }
             ReaderMessage::MutableToggle => {
                 self.mutable = !self.mutable;
+                true
+            }
+            ReaderMessage::SidebarToggle => {
+                self.sidebar_expanded = !self.sidebar_expanded;
                 true
             }
             ReaderMessage::NextPage => {
@@ -201,16 +253,38 @@ impl Component for Reader {
             let ReaderProps { db, volume_id } = ctx.props();
             let (page_right, page_left) = volume.select_pages();
             return html! {
-            <div id="ReaderGrid">
+            <div id="ReaderGrid" tabindex={"-1"} onkeypress={&self.handle_keypress}>
+                <sidebar::Sidebar
+                  commit={&self.commit_sidebar_data}
+                  onblur={&self.focus}
+                  toggle_sidebar={&self.toggle_sidebar}
+                  expanded={self.sidebar_expanded}
+                  data={sidebar::SidebarData{
+                    first_page_is_cover: volume.reader_state.first_page_is_cover,
+                    hide_sidebar: volume.hide_sidebar,
+                    line_height: volume.line_height,
+                    magnifier_width: volume.magnifier.width,
+                    magnifier_height: volume.magnifier.height,
+                    magnifier_radius: volume.magnifier.radius,
+                    magnification: volume.magnifier.zoom,
+                    show_help: self.show_help,
+                    show_magnifier: self.cursor.magnify,
+                  }}
+                />
                 <div
                   ref={&self.node}
                   id="Reader"
                   class={self.mutable.then(||Some("editable"))}
-                  tabindex="0"
+                  style={format!("line-height: {:.1}", volume.line_height)}
+                  tabindex="-1"
                   oncontextmenu={&self.handle_right_click}
-                  onkeypress={&self.handle_keypress}
                   onmousemove={&self.update_cursor}
                 >
+                {pagebar(
+                    self.window.left.rect.height as u32,
+                    ctx.link().callback(|_| Self::Message::NextPage),
+                )}
+
                 if self.cursor.magnify {
                     <magnifier::Magnifier
                         cursor={self.cursor.position}
@@ -220,11 +294,6 @@ impl Component for Reader {
                         force={&self.cursor.force}
                     />
                 }
-
-                {sidebar(
-                    self.window.left.rect.height as u32,
-                    ctx.link().callback(|_| Self::Message::NextPage),
-                )}
 
                 if let Some(name) = page_left {
                     <page::Page
@@ -251,7 +320,7 @@ impl Component for Reader {
                     />
                 }
 
-                {sidebar(
+                {pagebar(
                     self.window.right.rect.height as u32,
                     ctx.link().callback(|_| Self::Message::PrevPage),
                 )}
@@ -265,13 +334,13 @@ impl Component for Reader {
     }
 }
 
-fn sidebar(
+fn pagebar(
     height: u32,
     move_page: Callback<MouseEvent>,
 ) -> Html {
     let style = format!("height: {height}px; ");
     html! {
-        <div class="sidebar" {style}>
+        <div class="pagebar" {style}>
             <button onclick={move_page}>
                 {crate::icons::chevron()}
             </button>
@@ -281,12 +350,12 @@ fn sidebar(
 
 fn help(editing: bool) -> Html {
     const HELP: &str =
-        "H - Toggle Help | Z - Next Page | X - Previous Page | E - Toggle Editing ";
+        "H - Toggle Help | Z - Next Page | X - Previous Page | E - Toggle Editing | S - Toggle Sidebar | Right Click - Toggle Magnifier";
     const EDITING: &str =
-        "\"-\" - Decrease Font | \"+\" - Increase Font | BACKSPACE - Delete Textbox";
+        "\"-\" - Decrease Font | \"+\" - Increase Font | 0 - Autosize Box to Text |  \\ - Toggle Text Opacity | BACKSPACE - Delete Textbox";
     html! {
         <span id="HelpBanner">
-            {if editing {format!("{HELP} | {EDITING}")} else {HELP.to_owned()} }
+            {if editing {format!("{HELP} || {EDITING}")} else {HELP.to_owned()} }
         </span>
     }
 }
@@ -304,7 +373,7 @@ impl Reader {
 mod magnifier {
     use std::fmt::{Display, Formatter};
 
-    use yew::{function_component, Html, html, NodeRef, use_mut_ref};
+    use yew::{function_component, html, use_mut_ref, Html, NodeRef};
     use yew_autoprops::autoprops;
 
     use crate::models::MagnifierSettings;
@@ -450,7 +519,7 @@ mod page {
     use rexie::Rexie;
     use wasm_bindgen::{JsCast, JsValue, UnwrapThrowExt};
     use web_sys::{ClipboardEvent, MouseEvent};
-    use yew::{AttrValue, Callback, Component, Context, Event, Html, html, NodeRef, Properties};
+    use yew::{html, AttrValue, Callback, Component, Context, Event, Html, NodeRef, Properties};
 
     use crate::errors::AppError;
     use crate::models::{OcrBlock, PageImage, PageOcr};
@@ -721,11 +790,11 @@ mod ocr {
     use enclose::enclose;
     use wasm_bindgen::{JsCast, UnwrapThrowExt};
     use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
-    use yew::{AttrValue, Callback, Component, Context, Html, html, NodeRef, Properties};
+    use yew::{html, AttrValue, Callback, Component, Context, Html, NodeRef, Properties};
 
     use crate::models::OcrBlock;
     use crate::utils::timestamp;
-    use crate::utils::web::get_bounding_rect;
+    use crate::utils::web::{get_bounding_rect, set_caret};
 
     use super::drag::Drag;
     use super::window::BoundingBox;
@@ -746,14 +815,24 @@ mod ocr {
 
     pub enum TextBlockMessage {
         RemoveFocus,
-        EnableContentEditing,
+        SetContentEditing(bool),
+        ToggleTransparency,
         IncreaseFontSize,
         DecreaseFontSize,
         BeginDrag(i32, i32),
         UpdateDrag(i32, i32),
         EndDrag,
+        Autosize,
+        Move(Direction),
         CommitLines,
         DeleteBlock,
+    }
+
+    enum Direction {
+        Up,
+        Down,
+        Left,
+        Right,
     }
 
     pub struct TextBlock {
@@ -761,10 +840,12 @@ mod ocr {
         drag: Option<Drag>,
         node_ref: NodeRef,
         should_be_focused: bool,
+        transparent: bool,
         stamp: u64,  // timestamp (used to force redraws)
 
         begin_drag: Callback<MouseEvent>,
         commit_lines: Callback<FocusEvent>,
+        handle_escape: Callback<KeyboardEvent>,
         handle_keypress: Callback<KeyboardEvent>,
         ondblclick: Callback<MouseEvent>,
         onmouseleave: Callback<MouseEvent>,
@@ -780,8 +861,18 @@ mod ocr {
                 ctx.link().callback(|e: MouseEvent| Self::Message::BeginDrag(e.x(), e.y()));
             let commit_lines =
                 ctx.link().callback(|_: FocusEvent| Self::Message::CommitLines);
+            let handle_escape = ctx.link().batch_callback(|e: KeyboardEvent| {
+                if e.code().as_str() == "Escape" {
+                    Some(Self::Message::SetContentEditing(false))
+                } else { None }
+            });
             let handle_keypress = ctx.link().batch_callback(|e: KeyboardEvent| {
                 match e.code().as_str() {
+                    "Backquote" => {
+                        e.prevent_default();
+                        Some(Self::Message::SetContentEditing(true))
+                    }
+                    "Backslash" => Some(Self::Message::ToggleTransparency),
                     "Backspace" => {
                         if gloo_dialogs::confirm(DELETE_PROMPT) {
                             Some(Self::Message::DeleteBlock)
@@ -789,11 +880,16 @@ mod ocr {
                     }
                     "Minus" => Some(Self::Message::DecreaseFontSize),
                     "Equal" => Some(Self::Message::IncreaseFontSize),
+                    "Digit0" => Some(Self::Message::Autosize),
+                    "ArrowUp" => Some(Self::Message::Move(Direction::Up)),
+                    "ArrowDown" => Some(Self::Message::Move(Direction::Down)),
+                    "ArrowLeft" => Some(Self::Message::Move(Direction::Left)),
+                    "ArrowRight" => Some(Self::Message::Move(Direction::Right)),
                     _ => None,
                 }
             });
             let ondblclick =
-                ctx.link().callback(|_: MouseEvent| Self::Message::EnableContentEditing);
+                ctx.link().callback(|_: MouseEvent| Self::Message::SetContentEditing(true));
             let onmouseleave =
                 ctx.link().callback(|_: MouseEvent| Self::Message::EndDrag);
             let onmousemove =
@@ -806,9 +902,11 @@ mod ocr {
                 drag: None,
                 node_ref: NodeRef::default(),
                 should_be_focused: false,
+                transparent: false,
                 stamp: timestamp(),
                 begin_drag,
                 commit_lines,
+                handle_escape,
                 handle_keypress,
                 ondblclick,
                 onmouseleave,
@@ -821,25 +919,33 @@ mod ocr {
             match msg {
                 Self::Message::RemoveFocus => {
                     self.should_be_focused = false;
+                    self.transparent = false;
                     if self.contenteditable {
                         self.contenteditable = false;
-                        true
-                    } else { false }
+                    }
+                    true
                 }
-                Self::Message::EnableContentEditing => {
-                    self.contenteditable = true;
+                Self::Message::SetContentEditing(value) => {
+                    self.contenteditable = value;
+                    if self.contenteditable { set_caret(&self.node_ref) }
+                    true
+                }
+                Self::Message::ToggleTransparency => {
+                    self.transparent = !self.transparent;
                     true
                 }
                 Self::Message::IncreaseFontSize => {
                     let mut block = ctx.props().block.clone();
                     block.font_size += 1;
                     ctx.props().commit_block.emit(block);
+                    self.transparent = true;
                     false
                 }
                 Self::Message::DecreaseFontSize => {
                     let mut block = ctx.props().block.clone();
                     block.font_size -= 1;
                     ctx.props().commit_block.emit(block);
+                    self.transparent = true;
                     false
                 }
                 Self::Message::BeginDrag(x, y) => {
@@ -890,6 +996,74 @@ mod ocr {
                         true
                     } else { false }
                 }
+                Self::Message::Autosize => {
+                    let element = self.node_ref.cast::<web_sys::Element>()
+                        .expect_throw("could not resolve node reference");
+                    let (mut left, mut top, mut right, mut bottom) = {
+                        let child = element.children().get_with_index(0).unwrap();
+                        let bbox = child.get_bounding_client_rect();
+                        (bbox.left(), bbox.top(), bbox.right(), bbox.bottom())
+                    };
+                    for idx in 1..element.child_element_count() {
+                        let child = element.children().get_with_index(idx).unwrap();
+                        let bbox = child.get_bounding_client_rect();
+                        left = left.min(bbox.left());
+                        top = top.min(bbox.top());
+                        right = right.max(bbox.right());
+                        bottom = bottom.max(bbox.bottom());
+                    }
+
+                    let Props {
+                        bbox,
+                        block,
+                        commit_block,
+                        scale,
+                        ..
+                    } = ctx.props();
+                    let box_ = (
+                        ((left - bbox.rect.left) * scale).round() as u32,
+                        ((top - bbox.rect.top) * scale).round() as u32,
+                        ((right - bbox.rect.left) * scale).round() as u32,
+                        ((bottom - bbox.rect.top) * scale).round() as u32,
+                    );
+                    let mut block = block.clone();
+                    block.box_ = box_;
+                    commit_block.emit(block.to_owned());
+                    true
+                }
+                Self::Message::Move(direction) => {
+                    let Props { block, commit_block, .. } = ctx.props();
+                    let mut box_ = block.box_.clone();
+                    // box_ = (left as u32, top as u32, right as u32, bottom as u32)
+                    match direction {
+                        Direction::Up => {
+                            if let Some(top) = box_.1.checked_sub(1) {
+                                box_.1 = top;
+                                box_.3 -= 1;
+                            }
+                        }
+                        Direction::Down => {
+                            box_.1 += 1;
+                            box_.3 += 1;
+                        }
+                        Direction::Left => {
+                            if let Some(left) = box_.0.checked_sub(1) {
+                                box_.0 = left;
+                                box_.2 -= 1;
+                            }
+                        }
+                        Direction::Right => {
+                            box_.0 += 1;
+                            box_.2 += 1;
+                        }
+                    }
+
+                    let mut block = block.clone();
+                    block.box_ = box_;
+                    commit_block.emit(block.to_owned());
+                    self.transparent = true;
+                    true
+                }
                 Self::Message::CommitLines => {
                     let mut block = ctx.props().block.clone();
                     let children = self.html_element().children();
@@ -933,7 +1107,7 @@ mod ocr {
                 // Focus on the first <p> tag. This minimizes the chance that the
                 // user will write text to the <div> tag.
                 self.html_element().children().get_with_index(0).map(|elm|
-                elm.dyn_into::<web_sys::HtmlElement>().unwrap().focus().ok()
+                    elm.dyn_into::<web_sys::HtmlElement>().unwrap().focus().ok()
                 );
             }
         }
@@ -973,10 +1147,16 @@ mod ocr {
             let no_bubble = Callback::from(|e: KeyboardEvent| e.set_cancel_bubble(true));
             let noop = Callback::noop();
             let onkeydown =
-                if *mutable && !self.contenteditable { &self.handle_keypress } else { &noop };
+                match (*mutable, self.contenteditable) {
+                    (true, false) => &self.handle_keypress,
+                    (true, true) => &self.handle_escape,
+                    _ => &noop
+                };
             let onkeypress =
                 if self.contenteditable { &no_bubble } else { &noop };
             let noop = Callback::noop();
+            let ondblclick =
+                if *mutable && !self.contenteditable { &self.ondblclick } else { &noop };
             let onmousedown =
                 if *mutable && !self.contenteditable { &self.begin_drag } else { &noop };
             let onmousemove =
@@ -987,10 +1167,8 @@ mod ocr {
                   key={format!("{}-{}", block.uuid.as_str(), self.stamp)}
                   class={"ocr-block"}
                   contenteditable={self.contenteditable.then(|| "true")}
-                  {style} tabindex={"-1"}
-                  {onblur}
-                  {oncopy}
-                  ondblclick={&self.ondblclick}
+                  {style} tabindex={"0"}
+                  {onblur} {oncopy} {ondblclick}
                   {onkeydown} {onkeypress} {onmouseup} {onmousedown} {onmousemove}
                   onmouseleave={&self.onmouseleave}
                 >
@@ -1044,8 +1222,7 @@ mod ocr {
             let font = (block.font_size as f64) / scale;
             let mode = if block.vertical { "vertical-rl" } else { "horizontal-tb" };
             s.push_str(&format!("font-size: {font:.1}px; writing-mode: {mode}; "));
-            s.push_str("line-height: 1.5; ");
-            if self.drag.is_some_and(|d| d.dirty()) {
+            if self.transparent || self.drag.is_some_and(|d| d.dirty()) {
                 s.push_str("opacity: 50%; ");
             }
             s
@@ -1109,6 +1286,235 @@ mod drag {
         pub fn left(&self) -> i32 { self.pos_x.min(self.start_x) }
         pub fn top(&self) -> i32 { self.pos_y.min(self.start_y) }
         pub fn dirty(&self) -> bool { self.dirty }
+    }
+}
+
+mod sidebar {
+    use web_sys::{Event, FocusEvent, MouseEvent};
+    use yew::{html, Callback, Component, Context, Html, NodeRef, Properties};
+    use yew_router::prelude::Link;
+
+    use crate::utils::web::{get_input_bool, get_input_f64, get_input_u16, get_input_u8};
+    use crate::Route;
+
+    #[derive(Properties, PartialEq)]
+    pub struct Props {
+        pub commit: Callback<SidebarData>,
+        pub onblur: Callback<()>,
+        pub toggle_sidebar: Callback<MouseEvent>,
+        pub data: SidebarData,
+        pub expanded: bool,
+    }
+
+    #[derive(PartialEq)]
+    pub struct SidebarData {
+        pub first_page_is_cover: bool,
+        pub hide_sidebar: bool,
+        pub line_height: f64,
+        pub magnifier_height: u16,
+        pub magnifier_width: u16,
+        pub magnifier_radius: u8,
+        pub magnification: u16,
+
+        pub show_help: bool,
+        pub show_magnifier: bool,
+    }
+
+    pub struct Sidebar {
+        onblur: Callback<FocusEvent>,
+        onchange: Callback<Event>,
+
+        // NodeRefs
+        cover_toggle_ref: NodeRef,
+        hide_toggle_ref: NodeRef,
+        line_height_ref: NodeRef,
+        magnifier_height_ref: NodeRef,
+        magnifier_width_ref: NodeRef,
+        magnifier_radius_ref: NodeRef,
+        magnification_ref: NodeRef,
+        show_help_ref: NodeRef,
+        show_magnifier_ref: NodeRef,
+    }
+
+    pub enum Message {
+        Commit
+    }
+
+    impl Component for Sidebar {
+        type Message = Message;
+        type Properties = Props;
+
+        fn create(ctx: &Context<Self>) -> Self {
+            let onblur = ctx.props().onblur.clone();
+            let onblur = Callback::from(move |_| onblur.emit(()));
+            let onchange = ctx.link().callback(|_| Message::Commit);
+            Self {
+                onblur,
+                onchange,
+                cover_toggle_ref: NodeRef::default(),
+                hide_toggle_ref: NodeRef::default(),
+                line_height_ref: NodeRef::default(),
+                magnifier_height_ref: NodeRef::default(),
+                magnifier_width_ref: NodeRef::default(),
+                magnifier_radius_ref: NodeRef::default(),
+                magnification_ref: NodeRef::default(),
+                show_help_ref: NodeRef::default(),
+                show_magnifier_ref: NodeRef::default(),
+            }
+        }
+
+        fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+            let Props { commit, data, .. } = ctx.props();
+            match msg {
+                Message::Commit => {
+                    let first_page_is_cover = get_input_bool(&self.cover_toggle_ref)
+                        .unwrap_or(data.first_page_is_cover);
+                    let hide_sidebar = get_input_bool(&self.hide_toggle_ref)
+                        .unwrap_or(data.hide_sidebar);
+                    let show_help = get_input_bool(&self.show_help_ref)
+                        .unwrap_or(data.show_help);
+                    let show_magnifier = get_input_bool(&self.show_magnifier_ref)
+                        .unwrap_or(data.show_magnifier);
+                    let line_height = get_input_f64(&self.line_height_ref)
+                        .unwrap_or(data.line_height);
+                    let magnifier_height = get_input_u16(&self.magnifier_height_ref)
+                        .unwrap_or(data.magnifier_height);
+                    let magnifier_width = get_input_u16(&self.magnifier_width_ref)
+                        .unwrap_or(data.magnifier_width);
+                    let magnifier_radius = get_input_u8(&self.magnifier_radius_ref)
+                        .unwrap_or(data.magnifier_radius);
+                    let magnification = get_input_u16(&self.magnification_ref)
+                        .unwrap_or(data.magnification);
+                    let new_data = SidebarData {
+                        first_page_is_cover,
+                        hide_sidebar,
+                        line_height,
+                        magnifier_height,
+                        magnifier_width,
+                        magnifier_radius,
+                        magnification,
+                        show_help,
+                        show_magnifier,
+                    };
+                    if new_data != *data {
+                        commit.emit(new_data);
+                    }
+                    false
+                }
+            }
+        }
+
+        fn view(&self, ctx: &Context<Self>) -> Html {
+            let Props { toggle_sidebar, data, expanded, .. } = ctx.props();
+            let class = expanded.then_some("expanded");
+            let hidden = data.hide_sidebar && !expanded;
+            let onclick =
+                if *expanded { Callback::noop() } else { toggle_sidebar.clone() };
+            html! {
+                <div id="SideBar" tabindex={"2"} {class} {hidden} {onclick} onblur={&self.onblur}>
+                    <div class="sidebar-home-button-container">
+                        <Link<Route> to={Route::Home}>
+                            <button>{crate::icons::home()}</button>
+                        </Link<Route>>
+                    </div>
+
+                    <div class="sidebar-input-container">
+                        <label for="first-page-cover">{"First Page Is Cover"}</label>
+                        <input
+                            ref={&self.cover_toggle_ref}
+                            name="first-page-cover" type="checkbox"
+                            checked={data.first_page_is_cover}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+
+                    <div class="sidebar-input-container">
+                        <label for="line-height">{"Line-Height"}</label>
+                        <input
+                            ref={&self.line_height_ref}
+                            name="line-height" type="number"
+                            min="0.5" max="2.5" step="0.05"
+                            value={data.line_height.to_string()}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+
+                    <h3 class="sidebar-header">{"Magnifier Settings"}</h3>
+                    <div class="sidebar-input-container">
+                        <label for="show-magnifier">{"Show Magnifier"}</label>
+                        <input
+                            ref={&self.show_magnifier_ref}
+                            name="show-magnifier" type="checkbox"
+                            checked={data.show_magnifier}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+                    <div class="sidebar-input-container">
+                        <label for="height">{"Height"}</label>
+                        <input
+                            ref={&self.magnifier_height_ref}
+                            name="height" type="number"
+                            min="100" max="1000" step="10"
+                            value={data.magnifier_height.to_string()}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+                    <div class="sidebar-input-container">
+                        <label for="width">{"Width"}</label>
+                        <input
+                            ref={&self.magnifier_width_ref}
+                            name="width" type="number"
+                            min="100" max="1000" step="10"
+                            value={data.magnifier_width.to_string()}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+                    <div class="sidebar-input-container">
+                        <label for="radius">{"Border Radius"}</label>
+                        <input
+                            ref={&self.magnifier_radius_ref}
+                            name="width" type="number"
+                            min="0" max="100" step="5"
+                            value={data.magnifier_radius.to_string()}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+                    <div class="sidebar-input-container">
+                        <label for="scale">{"Magnification"}</label>
+                        <input
+                            ref={&self.magnification_ref}
+                            name="scale" type="number"
+                            min="100" max="400" step="10"
+                            value={data.magnification.to_string()}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+
+                    <h3 class="sidebar-header">{"Misc"}</h3>
+                    <div class="sidebar-input-container">
+                        <label for="show-help">{"Show Help"}</label>
+                        <input
+                            ref={&self.show_help_ref}
+                            name="show-help" type="checkbox"
+                            checked={data.show_help}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+                    <div class="sidebar-input-container">
+                        <label for="hide-sidebar">{"Hide Sidebar"}</label>
+                        <input
+                            ref={&self.hide_toggle_ref}
+                            name="hide-sidebar" type="checkbox"
+                            checked={data.hide_sidebar}
+                            onchange={&self.onchange}
+                        />
+                    </div>
+                    <div class="sidebar-input-container">
+                        <button onclick={toggle_sidebar}>{"<close"}</button>
+                    </div>
+                </div>
+            }
+        }
     }
 }
 

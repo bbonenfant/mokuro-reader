@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use rexie::Rexie;
 use web_sys::{DragEvent, Event, FileList, HtmlInputElement, MouseEvent};
-use yew::{Callback, function_component, html, Html, HtmlResult, TargetCast, use_state};
-use yew::suspense::{Suspense, use_future_with};
+use yew::suspense::{use_future_with, Suspense};
+use yew::{function_component, html, use_state, Callback, Html, HtmlResult, TargetCast};
 use yew_autoprops::autoprops;
 
 use crate::utils::timestamp;
@@ -97,7 +97,7 @@ fn preview(db: &Rc<Rexie>, file_obj: &gloo_file::File, rerender: u64) -> HtmlRes
 
 #[autoprops]
 #[function_component(DownloadButton)]
-fn download_button(db: &Rc<Rexie>, volume_id: &u32) -> Html {
+pub fn download_button(db: &Rc<Rexie>, volume_id: &u32) -> Html {
     let download_requested = use_state(|| false);
     let state = download_requested.clone();
     let onclick = Callback::from(move |_| {

@@ -19,20 +19,7 @@ uuid = { version = "1.9.1", features = ["v7", "js"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.42"
 wasm-timer = "0.2.5"
-web-sys = { version = "0.3", features = [
-    "ClipboardEvent",
-    "DragEvent",
-    "DataTransfer",
-    "Document",
-    "DomRect",
-    "Element",
-    "HtmlElement",
-    "HtmlInputElement",
-    "Navigator",
-    "Node",
-    "Selection",
-    "StorageManager"
-] }
+web-sys = { version = "0.3", features = ["ClipboardEvent", "DragEvent", "DataTransfer", "Document", "DomRect", "Element", "HtmlElement", "HtmlInputElement", "Navigator", "Node", "Selection", "StorageManager", "Range"] }
 yew = { version = "0.21", features = ["csr"] }
 yew-autoprops = "0.4.1"
 yew-hooks = "0.3.2"
