@@ -863,8 +863,8 @@ mod ocr {
                 ctx.link().callback(|_: FocusEvent| Self::Message::CommitLines);
             let handle_escape = ctx.link().batch_callback(|e: KeyboardEvent| {
                 if e.code().as_str() == "Escape" {
-                    Some(Self::Message::SetContentEditing(false))
-                } else { None }
+                    vec![Self::Message::SetContentEditing(false), Self::Message::CommitLines]
+                } else { vec![] }
             });
             let handle_keypress = ctx.link().batch_callback(|e: KeyboardEvent| {
                 match e.code().as_str() {
