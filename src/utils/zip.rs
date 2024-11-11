@@ -25,6 +25,7 @@ pub async fn extract_ziparchive(
             let data = read_zipfile(&mut archive, METADATA_FILE)?;
             serde_json::from_slice::<VolumeMetadata>(&data).unwrap()
         };
+        volume.id = None;  // ensure id is not specified. IndexDB determines this.
         volume.id = Some(put_volume(&db, &volume).await?);
         volume
     };
@@ -69,10 +70,14 @@ pub async fn create_ziparchive(
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Stored);
 
-    let metadata = serde_json::to_vec(&volume).unwrap();
+    let metadata = {
+        let mut volume = volume.clone();
+        volume.id = None;
+        serde_json::to_vec(&volume).unwrap()
+    };
     write_zipfile(&mut archive, METADATA_FILE, &metadata, options)
         .expect_throw("failed to write mokuro-config.json to zip archive");
-    archive.add_directory("_ocr/", options).unwrap();
+    archive.add_directory("_ocr/", options)?;
 
     let id = volume.id.unwrap().into();
     for (page_name, ocr_name) in volume.pages.iter() {
@@ -89,8 +94,9 @@ pub async fn create_ziparchive(
             .expect_throw("failed to write image file to zip archive");
     }
 
-    let buffer = archive.finish().unwrap().into_inner();
-    Ok(gloo_file::File::new("test.zip", &buffer[..]))
+    let name = &format!("{}.mbz.zip", volume.title);
+    let buffer = archive.finish()?.into_inner();
+    Ok(gloo_file::File::new(name, &buffer[..]))
 }
 
 fn read_zipfile<R: Read + Seek>(
@@ -119,7 +125,7 @@ fn write_zipfile<W: Write + Seek>(
     content: &[u8],
     options: SimpleFileOptions,
 ) -> std::io::Result<usize> {
-    writer.start_file(name, options).unwrap();
+    writer.start_file(name, options)?;
     let mut bytes_written = 0;
     while bytes_written < content.len() {
         bytes_written += writer.write(&content[bytes_written..])?;

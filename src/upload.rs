@@ -3,12 +3,12 @@ use std::rc::Rc;
 use rexie::Rexie;
 use web_sys::{DragEvent, Event, FileList, HtmlInputElement, MouseEvent};
 use yew::suspense::{use_future_with, Suspense};
-use yew::{function_component, html, use_state, Callback, Html, HtmlResult, TargetCast};
+use yew::{function_component, html, use_state, Callback, HtmlResult, TargetCast};
 use yew_autoprops::autoprops;
 
 use crate::utils::timestamp;
 use crate::utils::web::{ask_to_persist_storage, is_web_storage_persisted};
-use crate::utils::zip::{create_ziparchive, extract_ziparchive};
+use crate::utils::zip::extract_ziparchive;
 
 /// upload_modal creates a modal overlay where users can upload zip archives.
 /// It tries to check if the user has enabled persisted storage for the site,
@@ -52,7 +52,7 @@ pub fn upload_modal(
     let cancel_click = Callback::from(|e: MouseEvent| e.stop_propagation());
     let cancel_drag = &Callback::from(|e: DragEvent| e.prevent_default());
     Ok(html! {
-        <div class="modal" onclick={close_modal}>
+        <div id="UploadModal" onclick={close_modal}>
             <div class="modal-content" onclick={cancel_click}>
                 if let Ok(false) = persisted {
                     <p>
@@ -60,11 +60,10 @@ pub fn upload_modal(
                         <button onclick={persist_storage}>{"persist storage"}</button>
                     </p>
                 }
-                <p id="title">{ "Upload Your Files To The Cloud" }</p>
+                <p id="title">{ "Upload Your Mokuro Manga Files" }</p>
                 <label for="file-upload">
                     <div id="drop-container" {ondrop} ondragover={cancel_drag} ondragenter={cancel_drag}>
-                        <i class="fa fa-cloud-upload"></i>
-                        <p>{"Drop your images here or click to select"}</p>
+                        <p>{"Drop your Mokuro files here or click to select"}</p>
                     </div>
                 </label>
                 <input id="file-upload" type="file" accept="application/zip" multiple={true} {onchange}/>
@@ -87,47 +86,10 @@ fn preview(db: &Rc<Rexie>, file_obj: &gloo_file::File, rerender: u64) -> HtmlRes
     let (volume, cover_object_url) = future.as_ref().unwrap();
 
     Ok(html! {
-        <div id="preview-area">
-            <DownloadButton {db} volume_id={volume.id.unwrap()}/>
+        <div id="UploadPreview" class="flexbox">
             <img id="ItemPreview" src={cover_object_url.to_string()}/>
             { format!("volume_id: {}", volume.id.unwrap())}
         </div>
-    })
-}
-
-#[autoprops]
-#[function_component(DownloadButton)]
-pub fn download_button(db: &Rc<Rexie>, volume_id: &u32) -> Html {
-    let download_requested = use_state(|| false);
-    let state = download_requested.clone();
-    let onclick = Callback::from(move |_| {
-        state.set(true);
-    });
-    if !*download_requested {
-        html! {
-            <button {onclick}>{"Prepare Download"}</button>
-        }
-    } else {
-        html! {
-            <Suspense fallback={html! {<button>{"Preparing..."}</button>}}>
-                <DownloadButtonInner {db} {volume_id}/>
-            </Suspense>
-        }
-    }
-}
-
-#[autoprops]
-#[function_component(DownloadButtonInner)]
-fn download_button_inner(db: &Rc<Rexie>, volume_id: &u32) -> HtmlResult {
-    let future = use_future_with(*volume_id, move |_| {
-        create_ziparchive(db.clone(), *volume_id)
-    })?;
-    let file = future.as_ref().unwrap();
-    let url = use_state(|| gloo_file::ObjectUrl::from(file.clone()));
-    Ok(html! {
-        <a href={url.to_string()} download={file.name()}>
-            <button>{"Download"}</button>
-        </a>
     })
 }
 

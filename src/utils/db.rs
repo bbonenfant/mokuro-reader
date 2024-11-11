@@ -50,6 +50,7 @@ pub fn start_bulk_write_txn(db: &Rc<Rexie>) -> Result<(Transaction, Store, Store
     Ok((txn, pages, ocr))
 }
 
+#[allow(dead_code)]
 pub async fn get_page(db: Rc<Rexie>, volume_id: u32, name: AttrValue) -> Result<PageImage> {
     let key = js_sys::Array::of2(&volume_id.into(), &name.as_str().into());
     let txn = db.transaction(&[P], TransactionMode::ReadOnly)?;
@@ -82,12 +83,29 @@ pub async fn get_volume(db: &Rc<Rexie>, volume_id: u32) -> Result<VolumeMetadata
     Ok(serde_from_wasm(value).unwrap())
 }
 
+#[allow(dead_code)]
 pub async fn get_all_volumes(db: Rc<Rexie>) -> Result<Vec<VolumeMetadata>> {
     let values = db.transaction(&[V], TransactionMode::ReadOnly)?
         .store(V)?
         .get_all(None, None, None, None).await?;
     Ok(values.into_iter().map(|(_k, v)| serde_from_wasm(v).unwrap()).collect())
 }
+
+pub async fn get_all_volumes_with_covers(db: &Rc<Rexie>) -> Result<Vec<(VolumeMetadata, PageImage)>> {
+    let txn = db.transaction(&[V, P], TransactionMode::ReadOnly)?;
+    let values = txn.store(V)?.get_all(None, None, None, None).await?;
+    let pages = txn.store(P)?;
+
+    let mut result = Vec::with_capacity(values.len());
+    for (_k, v) in values.into_iter() {
+        let volume: VolumeMetadata = serde_from_wasm(v).expect("failed to deserialize volume metadata");
+        let key = js_sys::Array::of2(&volume.id.unwrap().into(), &volume.cover().as_str().into());
+        let cover: PageImage = pages.get(&key).await?.into();
+        result.push((volume, cover));
+    }
+    Ok(result)
+}
+
 
 /// put_config inserts/updates a row within the "volumes" ObjectStore.
 /// If `volume.id` is set, the object is updated.
@@ -97,4 +115,20 @@ pub async fn put_volume(db: &Rc<Rexie>, volume: &VolumeMetadata) -> Result<u32> 
     let volume_id = txn.store(V)?.put(&config, None).await?;
     txn.done().await?;
     Ok(volume_id.as_f64().unwrap() as u32)
+}
+
+/// delete_volume cascade deletes the volume with matching volume_id,
+///   removing all images and ocr data.
+pub async fn delete_volume(db: &Rc<Rexie>, volume_id: u32) -> Result<()> {
+    let volume = get_volume(db, volume_id).await?;
+    let txn = db.transaction(&[V, O, P], TransactionMode::ReadWrite)?;
+    let id = volume_id.into();
+    for (page_name, _) in volume.pages.iter() {
+        let key = js_sys::Array::of2(&id, &page_name.as_str().into());
+        txn.store(P)?.delete(&key).await?;
+        txn.store(O)?.delete(&key).await?;
+    }
+    txn.store(V)?.delete(&id).await?;
+    txn.done().await?;
+    Ok(())
 }

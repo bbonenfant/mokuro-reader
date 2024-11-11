@@ -1,94 +1,243 @@
-use std::rc::Rc;
-
+use enclose::enclose;
 use rexie::Rexie;
+use std::rc::Rc;
+use wasm_bindgen::UnwrapThrowExt;
 use web_sys::MouseEvent;
-use yew::suspense::{use_future_with, Suspense};
-use yew::{function_component, html, use_mut_ref, use_state, AttrValue, Callback, Html, HtmlResult};
-use yew_autoprops::autoprops;
-use yew_router::prelude::Link;
+use yew::suspense::Suspense;
+use yew::{html, AttrValue, Callback, Component, Context, Html, Properties};
+use yew_router::components::Link;
 
-use crate::upload::{DownloadButton, UploadModal};
-use crate::utils::db::{get_all_volumes, get_page};
-use crate::utils::timestamp;
+use crate::models::{PageImage, VolumeMetadata};
+use crate::upload::UploadModal;
+use crate::utils::db::{delete_volume, get_all_volumes_with_covers};
 use crate::Route;
 
-#[autoprops]
-#[function_component(Home)]
-pub fn home(db: &Rc<Rexie>) -> HtmlResult {
-    let rerender = use_state(timestamp);
+const DELETE_PROMPT: &str = "Are you sure you want to delete this volume?\nThere is no undo!";
 
-    // state and callbacks for showing the file upload modal
-    let should_show_upload_modal = use_state(|| false);
-    let show_upload_modal: Callback<MouseEvent> = {
-        let should_show_upload_modal = should_show_upload_modal.clone();
-        Callback::from(move |_| { should_show_upload_modal.set(true) })
-    };
-    let hide_upload_modal: Callback<MouseEvent> = {
-        let rerender = rerender.clone();
-        let should_show_upload_modal = should_show_upload_modal.clone();
-        Callback::from(move |_| {
-            rerender.set(timestamp());  // trigger rerender of gallery
-            should_show_upload_modal.set(false)
-        })
-    };
+#[derive(Properties, PartialEq)]
+pub struct Props {
+    pub db: Rc<Rexie>,
+}
 
-    Ok(html! {
-        <div>
-            <button onclick={show_upload_modal}>{"Upload"}</button>
-            <h1>{"Mokuro App"}</h1>
-            <h2>{"Hello World"}</h2>
-            <Gallery {db} rerender={*rerender}/>
-            if *should_show_upload_modal {
-                <Suspense fallback={Html::default()}>
-                    <UploadModal {db} close_modal={hide_upload_modal} rerender={*rerender}/>
-                </Suspense>
+pub enum Message {
+    Set(Vec<(VolumeMetadata, PageImage)>),
+    Delete(u32),
+    HideModal,
+    ShowModal,
+}
+
+/// GalleryItems are the volumes which are displayed on the home page.
+struct GalleryItem {
+    _object_url: gloo_file::ObjectUrl,
+    url: AttrValue,
+    volume: VolumeMetadata,
+}
+
+pub struct Home {
+    modal: bool,
+    volumes: Vec<GalleryItem>,
+    delete_volume: Callback<u32>,
+    hide_modal: Callback<MouseEvent>,
+    show_modal: Callback<MouseEvent>,
+}
+
+impl Component for Home {
+    type Message = Message;
+    type Properties = Props;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        let hide_modal = ctx.link().callback(|_| Message::HideModal);
+        let show_modal = ctx.link().callback(|_| Message::ShowModal);
+        let delete_volume = ctx.link().callback(|id| Message::Delete(id));
+        Self {
+            modal: false,
+            volumes: vec![],
+            delete_volume,
+            hide_modal,
+            show_modal,
+        }
+    }
+
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        let Props { db } = ctx.props();
+        match msg {
+            Message::Set(items) => {
+                self.volumes = items.into_iter().map(|(volume, page)| {
+                    let _object_url = gloo_file::ObjectUrl::from(page);
+                    let url = AttrValue::from(_object_url.to_string());
+                    GalleryItem { _object_url, url, volume }
+                }).collect();
+                true
             }
-        </div>
-    })
+            Message::Delete(volume_id) => {
+                if gloo_dialogs::confirm(&DELETE_PROMPT) {
+                    ctx.link().send_future(enclose!((db) delete(db, volume_id)));
+                }
+                false
+            }
+            Message::HideModal => {
+                self.modal = false;
+                ctx.link().send_future(enclose!((db) fetch(db)));
+                false
+            }
+            Message::ShowModal => {
+                self.modal = true;
+                true
+            }
+        }
+    }
+
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+        if first_render {
+            let Props { db } = ctx.props();
+            ctx.link().send_future(enclose!((db) fetch(db)))
+        }
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        let Props { db } = ctx.props();
+        let onclick = &self.show_modal;
+        let delete = &self.delete_volume;
+        let gallery: Html =
+            self.volumes.iter().rev().map(|v| v.render(db, delete)).collect();
+        html! {
+            <div>
+                <button onclick={onclick}>{"Upload"}</button>
+                <h1>{"Mokuro App"}</h1>
+                <h2>{"Hello World"}</h2>
+                <div id="Gallery">{gallery}</div>
+                if self.modal {
+                    <Suspense fallback={Html::default()}>
+                        <UploadModal {db} close_modal={&self.hide_modal} rerender={0}/>
+                    </Suspense>
+                }
+            </div>
+        }
+    }
 }
 
-#[autoprops]
-#[function_component(Gallery)]
-fn gallery(db: &Rc<Rexie>, rerender: u64) -> HtmlResult {
-    let future = use_future_with(rerender, |_| get_all_volumes(db.clone()))?;
-    let volumes = future.as_ref().expect("failed to get all volumes");
-    Ok(html! {
-        <div id="Gallery" class="flexbox">{
-            volumes.iter().map(|volume| {
-                let cover = volume.cover();
-                let title = &volume.title;
-                let volume_id = volume.id.unwrap();
-                html!{<GalleryVolume key={volume_id} {db} {volume_id} {title} {cover}/>}
-            }).collect::<Html>()
-        }</div>
-    })
+impl GalleryItem {
+    fn render(&self, db: &Rc<Rexie>, delete_cb: &Callback<u32>) -> Html {
+        let volume_id = self.volume.id.unwrap();
+        let onclick = delete_cb.reform(move |_| volume_id);
+        html! {
+            <div class="volume-item">
+                <Link<Route> to={Route::Reader {volume_id}}>
+                    <div class="volume-cover">
+                        <img src={&self.url} alt={&self.volume.title}/>
+                        <p>{&self.volume.title}</p>
+                    </div>
+                </Link<Route>>
+                <download::DownloadButton {db} {volume_id}/>
+                <button {onclick}>{"Delete"}</button>
+            </div>
+        }
+    }
 }
 
-#[autoprops]
-#[function_component(GalleryVolume)]
-fn gallery_volume(db: &Rc<Rexie>, volume_id: u32, title: AttrValue, cover: AttrValue) -> HtmlResult {
-    let state = use_mut_ref(|| None);  // use_state causes rerender
-    let page = {
-        let future = use_future_with(
-            cover.clone(), |_| get_page(db.clone(), volume_id, cover.clone()),
-        )?;
-        future.as_ref().unwrap().clone()
-    };
+async fn fetch(db: Rc<Rexie>) -> Message {
+    let items = get_all_volumes_with_covers(&db).await
+        .expect_throw("failed to retrieve all volumes from IndexDB");
+    Message::Set(items)
+}
 
-    let object_url = gloo_file::ObjectUrl::from(page);
-    let src = object_url.to_string();
-    // Store the ObjectUrl in state, as on drop the URL is revoked.
-    *state.borrow_mut() = Some(object_url);
+async fn delete(db: Rc<Rexie>, volume_id: u32) -> Message {
+    delete_volume(&db, volume_id).await
+        .expect_throw("failed to delete volume from IndexDB");
+    fetch(db).await
+}
 
-    Ok(html! {
-        <div class="volume-item">
-            <Link<Route> to={Route::Reader {volume_id}}>
-                <div class="volume-cover">
-                    <img {src} alt={&title}/>
-                    <p>{title}</p>
-                </div>
-            </Link<Route>>
-            <DownloadButton db={db.clone()} {volume_id}/>
-        </div>
-    })
+mod download {
+    use enclose::enclose;
+    use rexie::Rexie;
+    use std::cmp::PartialEq;
+    use std::rc::Rc;
+    use wasm_bindgen::UnwrapThrowExt;
+    use web_sys::MouseEvent;
+    use yew::{html, AttrValue, Callback, Component, Context, Html, Properties};
+
+    use crate::utils::zip::create_ziparchive;
+
+    #[derive(Properties, PartialEq)]
+    pub struct Props {
+        pub db: Rc<Rexie>,
+        pub volume_id: u32,
+    }
+
+    pub enum Message {
+        Request,
+        Set(gloo_file::File),
+    }
+
+
+    enum State {
+        Default,
+        Processing,
+        Ready(File),
+    }
+
+    struct File {
+        _url_object: gloo_file::ObjectUrl,
+        file: gloo_file::File,
+        url: AttrValue,
+    }
+
+    pub struct DownloadButton {
+        state: State,
+        onclick: Callback<MouseEvent>,
+    }
+
+    impl Component for DownloadButton {
+        type Message = Message;
+        type Properties = Props;
+
+        fn create(ctx: &Context<Self>) -> Self {
+            let onclick = ctx.link().callback(|_| Message::Request);
+            Self {
+                state: State::Default,
+                onclick,
+            }
+        }
+
+        fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+            let Props { db, volume_id } = ctx.props();
+            match msg {
+                Message::Request => {
+                    self.state = State::Processing;
+                    ctx.link().send_future(enclose!(
+                        (db, volume_id) fetch(db, volume_id)
+                    ));
+                    true
+                }
+                Message::Set(file) => {
+                    let _url_object = gloo_file::ObjectUrl::from(file.clone());
+                    let url = AttrValue::from(_url_object.to_string());
+                    self.state = State::Ready(File { _url_object, file, url });
+                    true
+                }
+            }
+        }
+
+        fn view(&self, _ctx: &Context<Self>) -> Html {
+            match &self.state {
+                State::Default => {
+                    html! { <button onclick={&self.onclick}>{"Prepare Download"}</button> }
+                }
+                State::Processing => html! { <button>{"Preparing..."}</button> },
+                State::Ready(file) => {
+                    html! {
+                        <a href={&file.url} download={file.file.name()}>
+                            <button>{"Download"}</button>
+                        </a>
+                    }
+                }
+            }
+        }
+    }
+
+    async fn fetch(db: Rc<Rexie>, volume_id: u32) -> Message {
+        let file = create_ziparchive(db.clone(), volume_id).await
+            .expect_throw("failed to create zip archive for download");
+        Message::Set(file)
+    }
 }

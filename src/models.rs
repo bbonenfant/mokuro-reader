@@ -11,6 +11,8 @@ pub struct VolumeMetadata {
     pub version: AttrValue,
     pub created_at: AttrValue,
     pub modified_at: AttrValue,
+    #[serde(default)]
+    pub series: AttrValue,
     pub title: AttrValue,
     pub volume: AttrValue,
     pub volume_uuid: AttrValue,

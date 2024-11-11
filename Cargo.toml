@@ -19,9 +19,29 @@ uuid = { version = "1.9.1", features = ["v7", "js"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.42"
 wasm-timer = "0.2.5"
-web-sys = { version = "0.3", features = ["ClipboardEvent", "DragEvent", "DataTransfer", "Document", "DomRect", "Element", "HtmlElement", "HtmlInputElement", "Navigator", "Node", "Selection", "StorageManager", "Range"] }
+web-sys = { version = "0.3", features = [
+    "ClipboardEvent",
+    "DragEvent",
+    "DataTransfer",
+    "Document",
+    "DomRect",
+    "Element",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Navigator",
+    "Node",
+    "Selection",
+    "StorageManager",
+    "Range"
+] }
 yew = { version = "0.21", features = ["csr"] }
 yew-autoprops = "0.4.1"
 yew-hooks = "0.3.2"
 yew-router = "0.18.0"
-zip = { version = "2.1.3", default-features = false, features = ["deflate", "deflate64"] }
+zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 'z'
+panic = 'abort'

@@ -614,7 +614,7 @@ mod page {
                 ));
                 return false;
             }
-            return true;
+            true
         }
 
         fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -828,7 +828,7 @@ mod ocr {
         DeleteBlock,
     }
 
-    enum Direction {
+    pub enum Direction {
         Up,
         Down,
         Left,
