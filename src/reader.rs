@@ -352,7 +352,7 @@ fn help(editing: bool) -> Html {
     const HELP: &str =
         "H - Toggle Help | Z - Next Page | X - Previous Page | E - Toggle Editing | S - Toggle Sidebar | Right Click - Toggle Magnifier";
     const EDITING: &str =
-        "\"-\" - Decrease Font | \"+\" - Increase Font | 0 - Autosize Box to Text |  \\ - Toggle Text Opacity | BACKSPACE - Delete Textbox";
+        "\"-\" - Decrease Font | \"+\" - Increase Font | 0 - Autosize Box to Text |  \"\\\" - Toggle Text Opacity | BACKSPACE - Delete Textbox";
     html! {
         <span id="HelpBanner">
             {if editing {format!("{HELP} || {EDITING}")} else {HELP.to_owned()} }

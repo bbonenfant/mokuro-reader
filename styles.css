@@ -59,21 +59,35 @@ p {
 #Gallery {
     display: flex;
     flex-wrap: wrap;
+    margin: auto;
+    width: 90%;
 
     .volume-item {
-        a, a:link, a:visited, a:hover, a:active a:any-link {
+        padding: 10px;
+        margin: 5px;
+        border: 2px solid lightslategray;
+
+        a, a:link, a:visited, a:hover, a:active a:any-link, & {
             /* remove styling on hyperlinks */
             color: inherit;
             text-decoration: inherit;
             font-weight: inherit;
 
-            .volume-cover {
-                margin: 10px;
+            img {
+                height: 364px;
+                width: 257px;
+                object-fit: fill;
+            }
 
-                img {
-                    height: 364px;
-                    width: 257px;
-                    object-fit: contain;
+            button {
+                height: 2em;
+
+                &.download {
+                    width: 65%;
+                }
+
+                &.delete {
+                    width: 35%;
                 }
             }
         }
@@ -98,7 +112,18 @@ p {
         border: 2px solid #888;
         width: 65%; /* Could be more or less, depending on screen size */
 
-        #title {
+        #storage-warning {
+            position: relative;
+            top: -1.5em;
+            margin: -22px;
+            padding: 5px;
+
+            background-color: cadetblue;
+            border: 2px solid #888;
+            text-align: center;
+        }
+
+        .modal-title {
             font-size: 2rem;
             text-align: center;
         }
@@ -112,6 +137,11 @@ p {
             background: #3d4141;
             border: 1px dashed #fcfcfc;
             border-radius: 1rem;
+            cursor: pointer;
+
+            p {
+                margin-block: 5px;
+            }
         }
 
         input#file-upload {
@@ -120,14 +150,24 @@ p {
         }
 
         #UploadPreview {
-            /*flex-wrap: wrap;*/
-            /*justify-content: center;*/
-            /*align-items: stretch;*/
+            display: flex;
+            flex-wrap: wrap;
+            margin: auto;
+            width: 90%;
 
-            img {
-                height: 364px;
-                width: 257px;
-                object-fit: contain;
+            .preview-item {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                padding: 10px;
+                margin: 5px;
+                border: 2px solid lightslategray;
+
+                img {
+                    height: 273px;
+                    width: 193px;
+                    object-fit: fill;
+                }
             }
         }
     }

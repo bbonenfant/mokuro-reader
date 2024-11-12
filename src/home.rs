@@ -3,7 +3,6 @@ use rexie::Rexie;
 use std::rc::Rc;
 use wasm_bindgen::UnwrapThrowExt;
 use web_sys::MouseEvent;
-use yew::suspense::Suspense;
 use yew::{html, AttrValue, Callback, Component, Context, Html, Properties};
 use yew_router::components::Link;
 
@@ -103,13 +102,11 @@ impl Component for Home {
         html! {
             <div>
                 <button onclick={onclick}>{"Upload"}</button>
-                <h1>{"Mokuro App"}</h1>
-                <h2>{"Hello World"}</h2>
+                <h1>{"Mokuro Library"}</h1>
+                <h2>{"Volumes"}</h2>
                 <div id="Gallery">{gallery}</div>
                 if self.modal {
-                    <Suspense fallback={Html::default()}>
-                        <UploadModal {db} close_modal={&self.hide_modal} rerender={0}/>
-                    </Suspense>
+                    <UploadModal {db} close_modal={&self.hide_modal}/>
                 }
             </div>
         }
@@ -123,13 +120,11 @@ impl GalleryItem {
         html! {
             <div class="volume-item">
                 <Link<Route> to={Route::Reader {volume_id}}>
-                    <div class="volume-cover">
-                        <img src={&self.url} alt={&self.volume.title}/>
-                        <p>{&self.volume.title}</p>
-                    </div>
+                    <img src={&self.url} alt={&self.volume.title}/>
                 </Link<Route>>
+                <p>{&self.volume.title}</p>
                 <download::DownloadButton {db} {volume_id}/>
-                <button {onclick}>{"Delete"}</button>
+                <button class="delete" {onclick}>{"Delete"}</button>
             </div>
         }
     }
@@ -219,15 +214,16 @@ mod download {
         }
 
         fn view(&self, _ctx: &Context<Self>) -> Html {
+            let class = "download";
             match &self.state {
                 State::Default => {
-                    html! { <button onclick={&self.onclick}>{"Prepare Download"}</button> }
+                    html! { <button {class} onclick={&self.onclick}>{"Prepare Download"}</button> }
                 }
-                State::Processing => html! { <button>{"Preparing..."}</button> },
+                State::Processing => html! { <button {class}>{"Preparing..."}</button> },
                 State::Ready(file) => {
                     html! {
                         <a href={&file.url} download={file.file.name()}>
-                            <button>{"Download"}</button>
+                            <button {class}>{"Download"}</button>
                         </a>
                     }
                 }
