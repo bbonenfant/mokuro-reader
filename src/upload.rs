@@ -9,6 +9,7 @@ use crate::models::VolumeMetadata;
 use crate::utils::web::{ask_to_persist_storage, is_web_storage_persisted};
 use crate::utils::zip::extract_ziparchive;
 
+#[allow(dead_code)]
 pub struct ExtractionError {
     error: crate::errors::AppError,
     filename: String,
@@ -154,6 +155,7 @@ impl Component for UploadModal {
                             <button onclick={&self.prompt}>{"persist storage"}</button>
                         </div>
                     }
+                    <div class="close-symbol" onclick={close_modal}>{crate::icons::close()}</div>
                     <p class="modal-title">{ "Upload Your Mokuro Manga Files" }</p>
                     <label for="file-upload">
                         <div id="drop-container" {ondrop} {ondragover} {ondragenter}>

@@ -6,6 +6,7 @@ use web_sys::MouseEvent;
 use yew::{html, AttrValue, Callback, Component, Context, Html, Properties};
 use yew_router::components::Link;
 
+use crate::icons;
 use crate::models::{PageImage, VolumeMetadata};
 use crate::upload::UploadModal;
 use crate::utils::db::{delete_volume, get_all_volumes_with_covers};
@@ -99,23 +100,29 @@ impl Component for Home {
         let delete = &self.delete_volume;
         let gallery: Html =
             self.volumes.iter().rev().map(|v| v.render(db, delete)).collect();
-        html! {
-            <div>
-                <button onclick={onclick}>{"Upload"}</button>
-                <h1>{"Mokuro Library"}</h1>
-                <h2>{"Volumes"}</h2>
-                <div id="Gallery">{gallery}</div>
-                if self.modal {
-                    <UploadModal {db} close_modal={&self.hide_modal}/>
-                }
+        html! {<>
+            <div id="HomeTopBar">
+                <div class="nav-buttons">
+                    <div class="settings">{icons::gear()}{"Settings"}</div>
+                    <div class="upload" onclick={onclick}>{icons::upload()}{"Upload"}</div>
+                </div>
+                <div class="title">{"Mokuro Library"}</div>
+                <div class="nav-gh-link">
+                    <a href="https://github.com/bbonenfant">{icons::github()}</a>
+                </div>
             </div>
-        }
+            <h2>{"Volumes"}</h2>
+            <div id="Gallery">{gallery}</div>
+            if self.modal {
+                <UploadModal {db} close_modal={&self.hide_modal}/>
+            }
+        </>}
     }
 }
 
 impl GalleryItem {
     fn render(&self, db: &Rc<Rexie>, delete_cb: &Callback<u32>) -> Html {
-        let volume_id = self.volume.id.unwrap();
+        let volume_id = self.volume.id.unwrap_throw();
         let onclick = delete_cb.reform(move |_| volume_id);
         html! {
             <div class="volume-item">
