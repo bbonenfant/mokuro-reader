@@ -211,6 +211,9 @@ impl Component for Reader {
             }
             ReaderMessage::SidebarToggle => {
                 self.sidebar_expanded = !self.sidebar_expanded;
+                if !self.sidebar_expanded {
+                    focus(&self.node);
+                }
                 true
             }
             ReaderMessage::NextPage => {
@@ -1294,16 +1297,17 @@ mod sidebar {
     use yew::{html, Callback, Component, Context, Html, NodeRef, Properties};
     use yew_router::prelude::Link;
 
+    use crate::icons;
     use crate::utils::web::{get_input_bool, get_input_f64, get_input_u16, get_input_u8};
     use crate::Route;
 
     #[derive(Properties, PartialEq)]
     pub struct Props {
+        pub data: SidebarData,
+        pub expanded: bool,
         pub commit: Callback<SidebarData>,
         pub onblur: Callback<()>,
         pub toggle_sidebar: Callback<MouseEvent>,
-        pub data: SidebarData,
-        pub expanded: bool,
     }
 
     #[derive(PartialEq)]
@@ -1405,18 +1409,32 @@ mod sidebar {
         }
 
         fn view(&self, ctx: &Context<Self>) -> Html {
-            let Props { toggle_sidebar, data, expanded, .. } = ctx.props();
+            let Props { data, expanded, toggle_sidebar, .. } = ctx.props();
+            let onblur = &self.onblur;
+            if !(*expanded || data.hide_sidebar) {
+                return html! {
+                    <div id="SideBar" tabindex={"2"} onclick={toggle_sidebar.clone()} {onblur}>
+                        {icons::burger()}
+                    </div>
+                };
+            }
+
             let class = expanded.then_some("expanded");
             let hidden = data.hide_sidebar && !expanded;
             let onclick =
                 if *expanded { Callback::noop() } else { toggle_sidebar.clone() };
+
             html! {
-                <div id="SideBar" tabindex={"2"} {class} {hidden} {onclick} onblur={&self.onblur}>
+                <div id="SideBar" tabindex={"2"} {class} {hidden} {onclick} {onblur}>
                     <div class="sidebar-home-button-container">
+                        <button onclick={toggle_sidebar}>{icons::chevron()}{"Close"}</button>
                         <Link<Route> to={Route::Home}>
-                            <button>{crate::icons::home()}</button>
+                            <button>{icons::home()}{"Home"}</button>
                         </Link<Route>>
                     </div>
+                    <hr/>
+                    <h2>{"Volume Settings"}</h2>
+                    <hr/>
 
                     <div class="sidebar-input-container">
                         <label for="first-page-cover">{"First Page Is Cover"}</label>
@@ -1508,9 +1526,6 @@ mod sidebar {
                             checked={data.hide_sidebar}
                             onchange={&self.onchange}
                         />
-                    </div>
-                    <div class="sidebar-input-container">
-                        <button onclick={toggle_sidebar}>{"<close"}</button>
                     </div>
                 </div>
             }

@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use rexie::Rexie;
-use yew::{Callback, function_component, html, Html, HtmlResult};
-use yew::suspense::{Suspense, use_future};
+use wasm_bindgen::UnwrapThrowExt;
+use yew::{html, Callback, Component, Context, Html};
 use yew_router::{BrowserRouter, Routable, Switch};
 
 use crate::errors::Result;
@@ -18,28 +18,56 @@ mod home;
 mod reader;
 mod icons;
 
-#[function_component(App)]
-fn app() -> Html {
-    // We need to use Suspense in order to establish the IndexedDB connection.
-    // I don't think the entrypoint component is allowed to suspend,
-    //   so we need this inner component.
-    #[function_component(AppWithDatabase)]
-    fn inner() -> HtmlResult {
-        // Create the IndexedDB client and store it within and Rc for cheap clones.
-        let db = {
-            let db_future = use_future(create_database)?;
-            Rc::new(db_future.as_ref().expect("unable to initialize database").clone())
-        };
-        let render = Callback::from(move |route| switch(&db, route));
+struct App {
+    db: Option<Rc<Rexie>>,
+}
 
-        Ok(html! {
-            <BrowserRouter>
-                <Switch<Route> {render} />
-            </BrowserRouter>
-        })
+enum Message {
+    Set(Rc<Rexie>)
+}
+
+impl Component for App {
+    type Message = Message;
+    type Properties = ();
+
+    fn create(_ctx: &Context<Self>) -> Self {
+        Self { db: None }
     }
-    let fallback = html! {<div>{"Initialing Database..."}</div>};
-    html! {<Suspense {fallback}><AppWithDatabase/></Suspense>}
+
+    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+        match msg {
+            Message::Set(db) => {
+                self.db = Some(db);
+                true
+            }
+        }
+    }
+
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+        if first_render {
+            ctx.link().send_future(initialize());
+        }
+    }
+
+    fn view(&self, _ctx: &Context<Self>) -> Html {
+        if let Some(db) = &self.db {
+            let db = db.clone();
+            let render = Callback::from(
+                move |route| switch(&db, route)
+            );
+            html! {
+                <BrowserRouter>
+                    <Switch<Route> {render} />
+                </BrowserRouter>
+            }
+        } else { Html::default() }
+    }
+}
+
+async fn initialize() -> Message {
+    let db =
+        Rc::new(create_database().await.expect_throw("failed to initialize database"));
+    Message::Set(db)
 }
 
 

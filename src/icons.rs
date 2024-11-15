@@ -4,6 +4,20 @@ const SVG_FILL: &str = "currentColor";
 const SVG_ROLE: &str = "img";
 const SVG_XMLNS: &str = "http://www.w3.org/2000/svg";
 
+pub fn burger() -> Html {
+    html! {
+        <svg
+            role={SVG_ROLE}
+            xmlns={SVG_XMLNS}
+            viewBox="0 0 24 24"
+        >
+            <path d="M4 18L20 18" stroke={SVG_FILL} stroke-width="2" stroke-linecap="round"/>
+            <path d="M4 12L20 12" stroke={SVG_FILL} stroke-width="2" stroke-linecap="round"/>
+            <path d="M4  6L20  6" stroke={SVG_FILL} stroke-width="2" stroke-linecap="round"/>
+        </svg>
+    }
+}
+
 // SVG of the icon that looks like >
 pub fn chevron() -> Html {
     html! {

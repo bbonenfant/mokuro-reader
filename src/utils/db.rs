@@ -2,12 +2,13 @@ use std::rc::Rc;
 
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde_wasm_bindgen::from_value as serde_from_wasm;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsValue, UnwrapThrowExt};
 use yew::AttrValue;
 
 use crate::errors::Result;
-use crate::models::{PageImage, PageOcr, VolumeMetadata};
+use crate::models::{PageImage, PageOcr, Settings, VolumeMetadata};
 
+const G: &str = "global";
 const O: &str = "ocr";
 const P: &str = "pages";
 const V: &str = "volumes";
@@ -32,13 +33,30 @@ const V: &str = "volumes";
 ///       IndexedDB does not support partial updates.
 pub async fn create_database() -> rexie::Result<Rexie> {
     let rexie = Rexie::builder("mokuro")
-        .version(1)
+        .version(2)
+        .add_object_store(ObjectStore::new(G))
         .add_object_store(ObjectStore::new(V).key_path("id").auto_increment(true))
         .add_object_store(ObjectStore::new(P))
         .add_object_store(ObjectStore::new(O))
         .build()
         .await?;
     Ok(rexie)
+}
+
+pub async fn get_settings(db: &Rc<Rexie>) -> Result<Settings> {
+    let settings = db.transaction(&[G], TransactionMode::ReadOnly)?
+        .store(G)?
+        .get(&JsValue::from_str("settings")).await
+        .map(|value| serde_from_wasm(value).unwrap_or(Settings::default()))?;
+    Ok(settings)
+}
+
+pub async fn put_settings(db: &Rc<Rexie>, settings: &Settings) -> Result<()> {
+    let value = serde_wasm_bindgen::to_value(settings).unwrap_throw();
+    db.transaction(&[G], TransactionMode::ReadWrite)?
+        .store(G)?
+        .put(&value, Some(&JsValue::from_str("settings"))).await?;
+    Ok(())
 }
 
 /// Start a transaction with the `pages` and `ocr` stores for bulk insertion.

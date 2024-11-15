@@ -7,7 +7,7 @@ use wasm_bindgen::UnwrapThrowExt;
 use zip::{read::ZipArchive, result::ZipError, write::{SimpleFileOptions, ZipWriter}};
 
 use crate::models::{PageImage, PageOcr, VolumeMetadata};
-use crate::utils::db::{get_page_and_ocr, get_volume, put_volume, start_bulk_write_txn};
+use crate::utils::db::{get_page_and_ocr, get_settings, get_volume, put_volume, start_bulk_write_txn};
 
 const METADATA_FILE: &str = "mokuro-metadata.json";
 
@@ -15,6 +15,8 @@ const METADATA_FILE: &str = "mokuro-metadata.json";
 pub async fn extract_ziparchive(
     db: &Rc<Rexie>, file_obj: gloo_file::File,
 ) -> crate::Result<(VolumeMetadata, gloo_file::ObjectUrl)> {
+    let global_settings = get_settings(db).await
+        .expect_throw("failed to retrieve settings from IndexDB");
     let mut archive = {
         let reader = Cursor::new(gloo_file_read(&file_obj).await?);
         ZipArchive::new(reader)?
@@ -27,6 +29,7 @@ pub async fn extract_ziparchive(
         };
         volume.id = None;  // ensure id is not specified. IndexDB determines this.
         volume.id = Some(put_volume(db, &volume).await?);
+        volume.magnifier = global_settings.magnifier;
         volume
     };
 
