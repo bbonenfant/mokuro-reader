@@ -135,6 +135,7 @@ h2, p {
         box-shadow: 0 0 12px #444444;
         padding: 10px;
         margin: 5px;
+        width: 280px;
 
         a, a:link, a:visited, a:hover, a:active a:any-link, & {
             /* remove styling on hyperlinks */
@@ -144,7 +145,7 @@ h2, p {
 
             img {
                 height: 364px;
-                width: 257px;
+                width: 256px;
                 object-fit: fill;
             }
 
@@ -159,6 +160,10 @@ h2, p {
                     width: 35%;
                 }
             }
+        }
+
+        p[contenteditable="true"] {
+            outline: 1px auto Highlight;
         }
     }
 }
@@ -202,6 +207,16 @@ h2, p {
         .modal-title {
             font-size: 2rem;
             text-align: center;
+        }
+
+        .modal-note {
+            font-size: 0.8em;
+            margin: 20px;
+            text-align: center;
+
+            a, a:link, a:visited, a:hover, a:active a:any-link {
+                color: #bbdefb;
+            }
         }
 
         #drop-container {

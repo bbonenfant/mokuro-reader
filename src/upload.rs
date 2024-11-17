@@ -157,6 +157,13 @@ impl Component for UploadModal {
                     }
                     <div class="close-symbol" onclick={close_modal}>{crate::icons::close()}</div>
                     <p class="modal-title">{ "Upload Your Mokuro Manga Files" }</p>
+                    <p class="modal-note">
+                        {"Only files generated from "}
+                        <a href={"https://github.com/bbonenfant/mokuro"} target="_blank">
+                            {"this Mokuro fork"}
+                        </a>
+                        {" are supported (*.mbz.zip)"}
+                    </p>
                     <label for="file-upload">
                         <div id="drop-container" {ondrop} {ondragover} {ondragenter}>
                             <p>{"drop Mokuro files here"}</p>
