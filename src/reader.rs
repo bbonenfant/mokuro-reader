@@ -255,6 +255,9 @@ impl Component for Reader {
         if let Some(volume) = &self.volume {
             let ReaderProps { db, volume_id } = ctx.props();
             let (page_right, page_left) = volume.select_pages();
+            let magnifier = if self.cursor.magnify {
+                volume.magnifier.render(&self.cursor.position, &self.node_left, &self.node_right)
+            } else { Html::default() };
             return html! {
             <div id="ReaderGrid" tabindex={"-1"} onkeypress={&self.handle_keypress}>
                 <sidebar::Sidebar
@@ -288,15 +291,7 @@ impl Component for Reader {
                     ctx.link().callback(|_| Self::Message::NextPage),
                 )}
 
-                if self.cursor.magnify {
-                    <magnifier::Magnifier
-                        cursor={self.cursor.position}
-                        settings={volume.magnifier}
-                        left={&self.node_left}
-                        right={&self.node_right}
-                        force={&self.cursor.force}
-                    />
-                }
+                {magnifier}
 
                 if let Some(name) = page_left {
                     <page::Page
@@ -374,82 +369,13 @@ impl Reader {
 }
 
 mod magnifier {
-    use std::fmt::{Display, Formatter};
-
-    use yew::{function_component, html, use_mut_ref, Html, NodeRef};
-    use yew_autoprops::autoprops;
-
-    use crate::models::MagnifierSettings;
-
-    #[autoprops]
-    #[function_component(Magnifier)]
-    pub fn magnifier(
-        cursor: (i32, i32),
-        settings: &MagnifierSettings,
-        left: &NodeRef,
-        right: &NodeRef,
-        force: u64,
-    ) -> Html {
-        let _ = force;
-        let style = use_mut_ref(MagnifierStyle::default);
-        let result = MagnifierStyle::compute(&cursor, left, right, settings);
-        if let Ok(value) = result {
-            *style.borrow_mut() = value;
-        }
-        let style = style.borrow().to_string();
-        html! {<div id="Magnifier" {style}/>}
-    }
-
-    #[derive(Clone, Default, PartialEq)]
-    struct BackgroundStyle {
-        url: String,
-        left: i32,
-        top: i32,
-        width: i32,
-        height: i32,
-    }
-
-    impl Display for BackgroundStyle {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            let Self { url, left, top, width, height } = self;
-            write!(f, "url({url}) {left}px {top}px / {width}px {height}px no-repeat")
-        }
-    }
-
-    #[derive(Clone, Default, PartialEq)]
-    struct MagnifierStyle {
-        left_: Option<BackgroundStyle>,
-        right_: Option<BackgroundStyle>,
-        left: i32,
-        top: i32,
-        width: i32,
-        height: i32,
-        radius: u8,
-        zoom: i32,
-    }
-
-    impl Display for MagnifierStyle {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            let Self { left_, right_, left, top, width, height, radius, .. } = self;
-            let background = match (left_, right_) {
-                (Some(l), Some(r)) => format!("background: {l}, {r}"),
-                (Some(l), None) => format!("background: {l}"),
-                (None, Some(r)) => format!("background: {r}"),
-                (None, None) => "".to_string(),
-            };
-            write!(f, "left: {left}px; top: {top}px; width: {width}px; height: {height}px; border-radius: {radius}%; {background}")
-        }
-    }
-
-    impl MagnifierStyle {
-        fn compute(
-            cursor: &(i32, i32),
-            left_ref: &NodeRef,
-            right_ref: &NodeRef,
-            magnifier: &MagnifierSettings,
-        ) -> Result<Self, ()> {
+    impl crate::models::MagnifierSettings {
+        pub(crate) fn render(
+            &self, cursor: &(i32, i32), left_ref: &yew::NodeRef, right_ref: &yew::NodeRef,
+        ) -> yew::Html {
+            let no_magnifier = yew::Html::default();
             let (zoom, height, width, radius) =
-                (magnifier.zoom as i32, magnifier.height as i32, magnifier.width as i32, magnifier.radius);
+                (self.zoom as i32, self.height as i32, self.width as i32, self.radius);
 
             // The node refs may not resolve to a currently rendered HTML elements,
             // i.e. in the case where only one page is being displayed instead of two.
@@ -457,7 +383,7 @@ mod magnifier {
             // we exit early.
             let left_img = left_ref.cast::<web_sys::Element>();
             let right_img = right_ref.cast::<web_sys::Element>();
-            let Some(img) = left_img.as_ref().or(right_img.as_ref()) else { return Err(()) };
+            let Some(img) = left_img.as_ref().or(right_img.as_ref()) else { return no_magnifier; };
             let single_page = left_img.is_some() ^ right_img.is_some();
 
             // Get some information about the image size and position.
@@ -465,7 +391,7 @@ mod magnifier {
                 let rect = img.get_bounding_client_rect();
                 (rect.height() as i32, rect.width() as i32, rect.top() as i32, rect.left() as i32)
             };
-            if img_height == 0 || img_width == 0 { return Err(()); }
+            if img_height == 0 || img_width == 0 { return no_magnifier; }
 
             // half the height and width of the magnifier element.
             let (center_y, center_x) = (height / 2, width / 2);
@@ -495,22 +421,32 @@ mod magnifier {
             let x_shift = center_x - ((x * zoom) / 100);
             let y_shift = center_y - ((y * zoom) / 100);
 
-            // css format: url() position / size repeat
-            let left_ = left_img.map(|element| {
-                let url = element.get_attribute("src").unwrap();
-                BackgroundStyle { url, left: x_shift, top: y_shift, width: z_width, height: z_height }
-            });
-            let right_ = right_img.map(|element| {
-                let url = element.get_attribute("src").unwrap();
-                let x_shift = if single_page { x_shift } else {
-                    center_x - (((x - img_width) * zoom) / 100)
-                };
-                BackgroundStyle { url, left: x_shift, top: y_shift, width: z_width, height: z_height }
-            });
+            let background = {
+                // css format: url() position / size repeat
+                let left_ = left_img.map(|element| {
+                    let url = element.get_attribute("src").unwrap();
+                    format!("url({url}) {x_shift}px {y_shift}px / {z_width}px {z_height}px no-repeat")
+                });
+                let right_ = right_img.map(|element| {
+                    let url = element.get_attribute("src").unwrap();
+                    let x_shift = if single_page { x_shift } else {
+                        center_x - (((x - img_width) * zoom) / 100)
+                    };
+                    format!("url({url}) {x_shift}px {y_shift}px / {z_width}px {z_height}px no-repeat")
+                });
+                match (left_, right_) {
+                    (Some(l), Some(r)) => format!("background: {l}, {r}"),
+                    (Some(l), None) => format!("background: {l}"),
+                    (None, Some(r)) => format!("background: {r}"),
+                    (None, None) => "".to_string(),
+                }
+            };
+
             // The position of the magnifier element.
             let left = img_left + x - center_x;
             let top = img_top + y - center_y;
-            Ok(MagnifierStyle { left_, right_, left, top, width, height, radius, zoom })
+            let style = format!("left: {left}px; top: {top}px; width: {width}px; height: {height}px; border-radius: {radius}%; {background}");
+            yew::html! { <div id="Magnifier" {style}/> }
         }
     }
 }
