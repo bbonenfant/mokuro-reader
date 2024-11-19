@@ -15,13 +15,15 @@ pub fn document() -> web_sys::Document {
 pub async fn is_web_storage_persisted() -> Result<bool, wasm_bindgen::JsValue> {
     let promise = window().navigator().storage().persisted()?;
     let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
-    Ok(result.as_bool().unwrap())
+    Ok(result.as_bool().unwrap_throw())
 }
 
+/// This method only functions as expected for HTTPS sites.
+/// ref: developer.mozilla.org/docs/Web/API/StorageManager/persist
 pub async fn ask_to_persist_storage() -> Result<bool, wasm_bindgen::JsValue> {
     let promise = window().navigator().storage().persist()?;
     let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
-    Ok(result.as_bool().unwrap())
+    Ok(result.as_bool().unwrap_throw())
 }
 
 pub fn get_screen_size() -> (f64, f64) {

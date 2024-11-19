@@ -82,7 +82,7 @@ impl Component for Reader {
         let focus = ctx.link().callback(|()| Self::Message::Focus);
         let handle_keypress = ctx.link().batch_callback(
             |e: KeyboardEvent| {
-                gloo_console::log!("KeyCode:", e.code());
+                // gloo_console::log!("KeyCode:", e.code());
                 match e.code().as_str() {
                     "KeyE" => Some(Self::Message::MutableToggle),
                     "KeyH" => Some(Self::Message::HelpToggle),
@@ -138,12 +138,11 @@ impl Component for Reader {
                     .expect_throw("failed to get volume from IndexedDB");
                 Self::Message::Set(volume)
             }))
-        } else { gloo_console::debug!("Rerender Reader") }
+        }
 
         let element = focused_element();
         if element.is_none() || element.is_some_and(|elm| elm.tag_name() == "BODY") {
             if let Some(elm) = self.node.cast::<HtmlElement>() {
-                gloo_console::info!("setting focus to #Reader");
                 elm.focus().expect_throw("failed to focus #Reader");
             }
         }
@@ -360,8 +359,7 @@ fn help(editing: bool) -> Html {
 
 impl Reader {
     async fn commit_volume(db: Rc<Rexie>, volume: VolumeMetadata) -> ReaderMessage {
-        let id = volume.id.expect_throw("missing volume id");
-        gloo_console::log!(format!("updating volume ({id} - {})", volume.title));
+        // gloo_console::log!(format!("updating volume ({id} - {})", volume.title));
         put_volume(&db, &volume).await
             .expect_throw("failed to update volume in IndexedDB");
         ReaderMessage::Set(volume)
@@ -456,14 +454,13 @@ mod page {
 
     use enclose::enclose;
     use rexie::Rexie;
-    use wasm_bindgen::{JsCast, JsValue, UnwrapThrowExt};
+    use wasm_bindgen::{JsCast, UnwrapThrowExt};
     use web_sys::{ClipboardEvent, MouseEvent};
     use yew::{html, AttrValue, Callback, Component, Context, Event, Html, NodeRef, Properties};
 
-    use crate::errors::AppError;
     use crate::models::{OcrBlock, PageImage, PageOcr};
     use crate::utils::db::{get_page_and_ocr, put_ocr};
-    use crate::utils::web::get_selection;
+    use crate::utils::web::{focus, get_selection};
 
     use super::drag::Drag;
     use super::window::BoundingBox;
@@ -483,6 +480,7 @@ mod page {
     pub enum PageMessage {
         Set(PageImage, PageOcr),
         Refresh(bool),
+        ReportBlur(NodeRef),
         DeleteBlock(AttrValue),
         UpdateBlock(OcrBlock),
         BeginDrag(i32, i32),
@@ -493,6 +491,7 @@ mod page {
     pub struct Page {
         _url_object: Option<gloo_file::ObjectUrl>,
         drag: Option<Drag>,
+        last_focus: Option<NodeRef>,
         ocr: PageOcr,
         url: AttrValue,
 
@@ -502,6 +501,7 @@ mod page {
         end_drag: Callback<MouseEvent>,
         onmousemove: Callback<MouseEvent>,
         oncopy: Callback<Event>,
+        report_blur: Callback<NodeRef>,
     }
 
     impl Component for Page {
@@ -530,9 +530,12 @@ mod page {
                     }
                 }
             });
+            let report_blur =
+                ctx.link().callback(|node| Self::Message::ReportBlur(node));
             Self {
                 _url_object: None,
                 drag: None,
+                last_focus: None,
                 ocr: PageOcr::default(),
                 url: AttrValue::default(),
                 commit,
@@ -541,6 +544,7 @@ mod page {
                 end_drag,
                 onmousemove,
                 oncopy,
+                report_blur,
             }
         }
 
@@ -568,6 +572,10 @@ mod page {
                 PageMessage::Refresh(_) => {
                     false
                 }
+                PageMessage::ReportBlur(node) => {
+                    self.last_focus = Some(node);
+                    false
+                }
                 PageMessage::DeleteBlock(uuid) => {
                     let index = self.ocr.blocks.iter()
                         .position(|b| b.uuid == uuid).unwrap();
@@ -578,7 +586,8 @@ mod page {
                     ctx.link().send_future(enclose!(
                         (db, volume_id => id, name) Self::commit_ocr(db, id, name, ocr)
                     ));
-                    ctx.props().focus_reader.emit(());
+                    if let Some(node) = &self.last_focus
+                    { focus(node); } else { ctx.props().focus_reader.emit(()); }
                     true
                 }
                 PageMessage::UpdateBlock(block) => {
@@ -629,7 +638,7 @@ mod page {
                 ctx.link().send_future(enclose!(
                     (db, volume_id => id, name) Self::fetch(db, id, name)
                 ))
-            } else { gloo_console::debug!("Rerender", ctx.props().name.as_str()) }
+            }
         }
 
         fn view(&self, ctx: &Context<Self>) -> Html {
@@ -676,6 +685,7 @@ mod page {
                             commit_block={&self.commit}
                             delete_block={&self.delete}
                             oncopy={&self.oncopy}
+                            report_blur={&self.report_blur}
                         /> }
                     }).collect::<Html>()
                 }
@@ -692,13 +702,8 @@ mod page {
             PageMessage::Set(image, ocr)
         }
         async fn commit_ocr(db: Rc<Rexie>, id: u32, name: AttrValue, ocr: PageOcr) -> PageMessage {
-            gloo_console::log!(format!("updating OCR ({id}, {name})"));
             let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
-            put_ocr(&db, &ocr, &key).await.unwrap_or_else(|error| {
-                if let AppError::RexieError(err) = error {
-                    gloo_console::error!(JsValue::from(err));
-                }
-            });
+            put_ocr(&db, &ocr, &key).await.unwrap_throw();
             PageMessage::Refresh(true)
         }
 
@@ -750,6 +755,7 @@ mod ocr {
         pub commit_block: Callback<OcrBlock>,
         pub delete_block: Callback<AttrValue>,
         pub oncopy: Callback<Event>,
+        pub report_blur: Callback<NodeRef>,
     }
 
     pub enum TextBlockMessage {
@@ -820,10 +826,22 @@ mod ocr {
                     "Minus" => Some(Self::Message::DecreaseFontSize),
                     "Equal" => Some(Self::Message::IncreaseFontSize),
                     "Digit0" => Some(Self::Message::Autosize),
-                    "ArrowUp" => Some(Self::Message::Move(Direction::Up)),
-                    "ArrowDown" => Some(Self::Message::Move(Direction::Down)),
-                    "ArrowLeft" => Some(Self::Message::Move(Direction::Left)),
-                    "ArrowRight" => Some(Self::Message::Move(Direction::Right)),
+                    "ArrowUp" => {
+                        e.prevent_default();
+                        Some(Self::Message::Move(Direction::Up))
+                    }
+                    "ArrowDown" => {
+                        e.prevent_default();
+                        Some(Self::Message::Move(Direction::Down))
+                    }
+                    "ArrowLeft" => {
+                        e.prevent_default();
+                        Some(Self::Message::Move(Direction::Left))
+                    }
+                    "ArrowRight" => {
+                        e.prevent_default();
+                        Some(Self::Message::Move(Direction::Right))
+                    }
                     _ => None,
                 }
             });
@@ -862,6 +880,7 @@ mod ocr {
                     if self.contenteditable {
                         self.contenteditable = false;
                     }
+                    ctx.props().report_blur.emit(self.node_ref.clone());
                     true
                 }
                 Self::Message::SetContentEditing(value) => {
