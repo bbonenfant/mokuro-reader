@@ -164,7 +164,7 @@ impl Component for Home {
                 <div class="title">{"Mokuro Library"}</div>
                 <div class="nav-buttons nav-buttons-right">
                     <div class="help" onclick={&self.show_help}>{"Help"}</div>
-                    <a href="https://github.com/bbonenfant">{icons::github()}</a>
+                    <a href="https://github.com/bbonenfant/mokuro-reader">{icons::github()}</a>
                 </div>
             </div>
             <div id="HomeGrid">
@@ -390,8 +390,10 @@ mod help {
                     "Most actions have a keyboard shortcut, and some have mouse-based equivalents. \
                      Additionally, a \"magnifying glass\" can be enabled by right-clicking the \
                      reader. When in the Reader view, press \"H\" to display a help banner that \
-                     lists all the actions."
-                    }</p>
+                     lists all the actions. A complete list of actions can be found "}
+                    <a href={"https://github.com/bbonenfant/mokuro-reader#actions"} target="_blank">{"here"}</a>
+                    {"."}
+                    </p>
                 </div>
             </div>
         </div>
