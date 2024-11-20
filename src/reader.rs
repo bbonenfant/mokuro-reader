@@ -1395,7 +1395,7 @@ mod sidebar {
                         <label for="first-page-cover">{"First Page Is Cover"}</label>
                         <input
                             ref={&self.cover_toggle_ref}
-                            name="first-page-cover" type="checkbox"
+                            id="first-page-cover" type="checkbox"
                             checked={data.first_page_is_cover}
                             onchange={&self.onchange}
                         />
@@ -1405,7 +1405,7 @@ mod sidebar {
                         <label for="line-height">{"Line-Height"}</label>
                         <input
                             ref={&self.line_height_ref}
-                            name="line-height" type="number"
+                            id="line-height" type="number"
                             min="0.5" max="2.5" step="0.05"
                             value={data.line_height.to_string()}
                             onchange={&self.onchange}
@@ -1417,7 +1417,7 @@ mod sidebar {
                         <label for="show-magnifier">{"Show Magnifier"}</label>
                         <input
                             ref={&self.show_magnifier_ref}
-                            name="show-magnifier" type="checkbox"
+                            id="show-magnifier" type="checkbox"
                             checked={data.show_magnifier}
                             onchange={&self.onchange}
                         />
@@ -1426,7 +1426,7 @@ mod sidebar {
                         <label for="height">{"Height"}</label>
                         <input
                             ref={&self.magnifier_height_ref}
-                            name="height" type="number"
+                            id="height" type="number"
                             min="100" max="1000" step="10"
                             value={data.magnifier_height.to_string()}
                             onchange={&self.onchange}
@@ -1436,7 +1436,7 @@ mod sidebar {
                         <label for="width">{"Width"}</label>
                         <input
                             ref={&self.magnifier_width_ref}
-                            name="width" type="number"
+                            id="width" type="number"
                             min="100" max="1000" step="10"
                             value={data.magnifier_width.to_string()}
                             onchange={&self.onchange}
@@ -1446,7 +1446,7 @@ mod sidebar {
                         <label for="radius">{"Border Radius"}</label>
                         <input
                             ref={&self.magnifier_radius_ref}
-                            name="width" type="number"
+                            id="radius" type="number"
                             min="0" max="100" step="5"
                             value={data.magnifier_radius.to_string()}
                             onchange={&self.onchange}
@@ -1456,7 +1456,7 @@ mod sidebar {
                         <label for="scale">{"Magnification"}</label>
                         <input
                             ref={&self.magnification_ref}
-                            name="scale" type="number"
+                            id="scale" type="number"
                             min="100" max="400" step="10"
                             value={data.magnification.to_string()}
                             onchange={&self.onchange}
@@ -1468,7 +1468,7 @@ mod sidebar {
                         <label for="show-help">{"Show Help"}</label>
                         <input
                             ref={&self.show_help_ref}
-                            name="show-help" type="checkbox"
+                            id="show-help" type="checkbox"
                             checked={data.show_help}
                             onchange={&self.onchange}
                         />
@@ -1477,7 +1477,7 @@ mod sidebar {
                         <label for="hide-sidebar">{"Hide Sidebar"}</label>
                         <input
                             ref={&self.hide_toggle_ref}
-                            name="hide-sidebar" type="checkbox"
+                            id="hide-sidebar" type="checkbox"
                             checked={data.hide_sidebar}
                             onchange={&self.onchange}
                         />

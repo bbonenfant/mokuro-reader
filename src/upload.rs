@@ -140,6 +140,7 @@ impl Component for UploadModal {
                 }).collect();
                 html! {<>
                     <p>{"Complete"}</p>
+                    <hr/>
                     <div id="UploadPreview">
                         {previews}
                     </div>
@@ -147,12 +148,12 @@ impl Component for UploadModal {
             }
         };
         html! {
-            <div id="UploadModal" onclick={close_modal}>
+            <div id="Modal" onclick={close_modal}>
                 <div class="modal-content" onclick={&self.cancel_click}>
                     if let Some(false) = self.persisted {
                         <div id="storage-warning">
-                            {"please persist storage to protect your files --->"}
-                            <button onclick={&self.prompt}>{"persist storage"}</button>
+                            {"Please persist storage to protect your files ---> "}
+                            <button onclick={&self.prompt}>{"Persist Your Storage"}</button>
                         </div>
                     }
                     <div class="close-symbol" onclick={close_modal}>{crate::icons::close()}</div>
@@ -178,10 +179,6 @@ impl Component for UploadModal {
         }
     }
 }
-
-/// upload_modal creates a modal overlay where users can upload zip archives.
-/// It tries to check if the user has enabled persisted storage for the site,
-///   and if not prompts the user to enable it.
 
 async fn check() -> Message {
     Message::StoragePersisted(is_web_storage_persisted().await.unwrap_or(true))

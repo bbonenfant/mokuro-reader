@@ -97,18 +97,25 @@ h2, p {
         text-align: center;
     }
 
-    div.nav-gh-link {
+    div.nav-buttons-right {
         display: flex;
-        margin: auto 8px 0 auto;
+        margin: auto 0 0 auto;
+
+        .help {
+            padding-bottom: 2px;
+        }
 
         a {
             display: flex;
+            height: 1em;
+            margin-inline: 10px;
             color: #f0f6fc;
             cursor: pointer;
             text-decoration: none;
 
             svg {
                 height: 32px;
+                transform: translateY(-0.4em);
             }
         }
     }
@@ -168,7 +175,7 @@ h2, p {
     }
 }
 
-#UploadModal {
+#Modal {
     position: fixed; /* Stay in place */
     z-index: 1; /* Sit on top */
     left: 0;
@@ -177,11 +184,11 @@ h2, p {
     height: 100%; /* Full height */
     overflow: auto; /* Enable scroll if needed */
     background-color: rgb(0, 0, 0); /* Fallback color */
-    background-color: rgba(0, 0, 0, 0.4); /* Black w/ opacity */
+    background-color: rgba(0, 0, 0, 0.6); /* Black w/ opacity */
 
     .modal-content {
         background-color: var(--background-color);
-        margin: 15% auto; /* 15% from the top and centered */
+        margin: 100px auto; /* centered and offset from the top */
         padding: 20px;
         border: 2px solid #888;
         width: 65%; /* Could be more or less, depending on screen size */
@@ -206,17 +213,30 @@ h2, p {
 
         .modal-title {
             font-size: 2rem;
+            margin-block: 0.8em;
             text-align: center;
+        }
+
+        .modal-subtitle {
+            font-size: 1.4rem;
+            margin-block: 0.8em;
+            text-align: center !important;
+        }
+
+        .help-content > p {
+            text-align: left;
+            white-space: pre-line;
+            word-wrap: break-word;
         }
 
         .modal-note {
             font-size: 0.8em;
             margin: 20px;
             text-align: center;
+        }
 
-            a, a:link, a:visited, a:hover, a:active a:any-link {
-                color: #bbdefb;
-            }
+        a, a:link, a:visited, a:hover, a:active a:any-link {
+            color: #bbdefb;
         }
 
         #drop-container {
@@ -273,6 +293,7 @@ h2, p {
     #Reader {
         grid-column: 2 / 3;
         grid-row: 1 / 2;
+        position: relative;
         padding: 10px;
 
         display: flex;
@@ -373,6 +394,10 @@ h2, p {
                     z-index: 5;
                 }
             }
+        }
+
+        &:has(#Magnifier) {
+            overflow: hidden;
         }
 
         #Magnifier {
