@@ -479,7 +479,7 @@ mod page {
 
     pub enum PageMessage {
         Set(PageImage, PageOcr),
-        Refresh(bool),
+        Refresh,
         ReportBlur(NodeRef),
         DeleteBlock(AttrValue),
         UpdateBlock(OcrBlock),
@@ -569,9 +569,7 @@ mod page {
                     self.ocr = ocr;
                     true
                 }
-                PageMessage::Refresh(_) => {
-                    false
-                }
+                PageMessage::Refresh => true,
                 PageMessage::ReportBlur(node) => {
                     self.last_focus = Some(node);
                     false
@@ -704,7 +702,7 @@ mod page {
         async fn commit_ocr(db: Rc<Rexie>, id: u32, name: AttrValue, ocr: PageOcr) -> PageMessage {
             let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
             put_ocr(&db, &ocr, &key).await.unwrap_throw();
-            PageMessage::Refresh(true)
+            PageMessage::Refresh
         }
 
         #[inline(always)]

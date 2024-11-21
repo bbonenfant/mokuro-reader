@@ -1,5 +1,6 @@
 pub type Result<T> = std::result::Result<T, AppError>;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum AppError {
     InvalidMokuroFile(InvalidMokuroFileError),
@@ -8,6 +9,7 @@ pub enum AppError {
     ZipError(zip::result::ZipError),
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum InvalidMokuroFileError {
     MissingFile(String)

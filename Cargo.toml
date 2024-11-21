@@ -35,8 +35,6 @@ web-sys = { version = "0.3", features = [
     "Range"
 ] }
 yew = { version = "0.21", features = ["csr"] }
-yew-autoprops = "0.4.1"
-yew-hooks = "0.3.2"
 yew-router = "0.18.0"
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 
