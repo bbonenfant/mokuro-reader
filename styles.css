@@ -293,7 +293,7 @@ h2, p {
     #Reader {
         grid-column: 2 / 3;
         grid-row: 1 / 2;
-        position: relative;
+        /*position: relative;*/
         padding: 10px;
 
         display: flex;

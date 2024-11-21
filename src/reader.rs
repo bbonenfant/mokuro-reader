@@ -286,7 +286,7 @@ impl Component for Reader {
                   onmousemove={&self.update_cursor}
                 >
                 {pagebar(
-                    self.window.left.rect.height as u32,
+                    self.window.right.rect.height as u32,
                     ctx.link().callback(|_| Self::Message::NextPage),
                 )}
 
@@ -1152,8 +1152,18 @@ mod ocr {
             let dx = self.drag.as_ref().map_or(0, |d: &Drag| d.delta_x()) as f64;
             let dy = self.drag.as_ref().map_or(0, |d: &Drag| d.delta_y()) as f64;
 
-            let top = bbox.rect.top + (block.top() / scale) + dy;
-            let left = bbox.rect.left + (block.left() / scale) + dx;
+            let top = {
+                let top = bbox.rect.top + (block.top() / scale) + dy;
+                if top > (bbox.rect.top + bbox.rect.height) {
+                    bbox.rect.top + bbox.rect.height - 10.
+                } else { top }
+            };
+            let left = {
+                let left = bbox.rect.left + (block.left() / scale) + dx;
+                if left > bbox.rect.left + bbox.rect.width {
+                    bbox.rect.left + bbox.rect.width - 10.
+                } else { left }
+            };
             let height = block.height() / scale;
             let width = block.width() / scale;
 
