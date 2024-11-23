@@ -122,6 +122,7 @@ h2, p {
 }
 
 #HomeGrid {
+    min-height: calc(100vh - 58px); /* screen height minus height of nav bar */
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
 
@@ -293,7 +294,8 @@ h2, p {
     #Reader {
         grid-column: 2 / 3;
         grid-row: 1 / 2;
-        /*position: relative;*/
+        position: relative; /* essential for overflow: hidden to work correctly */
+        overflow: hidden;
         padding: 10px;
 
         display: flex;
@@ -357,7 +359,7 @@ h2, p {
         }
 
         .ocr-block {
-            position: absolute;
+            position: fixed;
             color: black;
 
             > p {
@@ -396,10 +398,6 @@ h2, p {
             }
         }
 
-        &:has(#Magnifier) {
-            overflow: hidden;
-        }
-
         #Magnifier {
             position: absolute;
             background-color: var(--background-color);
@@ -434,6 +432,8 @@ h2, p {
 
     &.expanded {
         width: 140px;
+        overflow-y: scroll;
+        scrollbar-width: thin;
     }
 
     > svg {
