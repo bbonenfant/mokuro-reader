@@ -584,8 +584,11 @@ mod page {
                     ctx.link().send_future(enclose!(
                         (db, volume_id => id, name) Self::commit_ocr(db, id, name, ocr)
                     ));
-                    if let Some(node) = &self.last_focus
-                    { focus(node); } else { ctx.props().focus_reader.emit(()); }
+                    if let Some(node) = &self.last_focus {
+                        if !focus(node) {
+                            ctx.props().focus_reader.emit(());
+                        }
+                    } else { ctx.props().focus_reader.emit(()); }
                     true
                 }
                 PageMessage::UpdateBlock(block) => {

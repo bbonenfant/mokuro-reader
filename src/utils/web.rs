@@ -15,7 +15,7 @@ pub fn document() -> web_sys::Document {
 pub async fn is_web_storage_persisted() -> Result<bool, wasm_bindgen::JsValue> {
     let promise = window().navigator().storage().persisted()?;
     let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
-    Ok(result.as_bool().unwrap_throw())
+    Ok(result.as_bool().unwrap_or(false))
 }
 
 /// This method only functions as expected for HTTPS sites.
@@ -23,7 +23,7 @@ pub async fn is_web_storage_persisted() -> Result<bool, wasm_bindgen::JsValue> {
 pub async fn ask_to_persist_storage() -> Result<bool, wasm_bindgen::JsValue> {
     let promise = window().navigator().storage().persist()?;
     let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
-    Ok(result.as_bool().unwrap_throw())
+    Ok(result.as_bool().unwrap_or(false))
 }
 
 pub fn get_screen_size() -> (f64, f64) {
@@ -48,26 +48,25 @@ pub fn get_selection() -> Option<web_sys::Selection> {
 /// Attempts to set the caret (text cursor) at the start of the
 /// contenteditable element.
 pub fn set_caret(node: &yew::NodeRef) {
-    let element = node.cast::<web_sys::HtmlElement>()
-        .expect_throw("Could not resolve node reference");
+    let element = node.cast::<web_sys::HtmlElement>();
+    let range = document().create_range();
+    if let (Some(element), Ok(range)) = (element, range) {
+        element.child_nodes().get(0).map(|child| {
+            range.set_start(&child, 0).unwrap_throw();
+            range.collapse_with_to_start(true);
 
-    let range = document().create_range().unwrap_throw();
-    element.child_nodes().get(0).map(|child| {
-        range.set_start(&child, 0).unwrap_throw();
-        range.collapse_with_to_start(true);
-
-        window().get_selection().unwrap_throw().map(|selection| {
-            selection.remove_all_ranges().unwrap_throw();
-            selection.add_range(&range).unwrap_throw();
-        })
-    });
+            window().get_selection().unwrap_throw().map(|selection| {
+                selection.remove_all_ranges().unwrap_throw();
+                selection.add_range(&range).unwrap_throw();
+            })
+        });
+    }
 }
 
 #[inline(always)]
 pub fn focus(node: &yew::NodeRef) -> bool {
     node.cast::<web_sys::HtmlElement>()
-        .expect_throw("Could not resolve node reference")
-        .focus().is_ok()
+        .is_some_and(|element| element.focus().is_ok())
 }
 
 pub fn focused_element() -> Option<web_sys::Element> {
@@ -76,9 +75,10 @@ pub fn focused_element() -> Option<web_sys::Element> {
 
 #[allow(dead_code)]
 pub fn is_focused(node: &yew::NodeRef) -> bool {
-    let element = node.cast::<web_sys::Element>()
-        .expect_throw("Could not resolve node reference");
-    focused_element().is_some_and(|elm| elm == element)
+    node.cast::<web_sys::Element>()
+        .is_some_and(|element|
+            focused_element().is_some_and(|elm| elm == element)
+        )
 }
 
 pub fn get_input_bool(node: &yew::NodeRef) -> Option<bool> {
