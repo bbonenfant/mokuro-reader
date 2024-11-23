@@ -350,7 +350,7 @@ h2, p {
         }
 
         .new-ocr-block {
-            position: absolute;
+            position: fixed;
             cursor: crosshair;
             background-color: lightgray;
             outline: 1px solid darkgray;
@@ -399,7 +399,7 @@ h2, p {
         }
 
         #Magnifier {
-            position: absolute;
+            position: fixed;
             background-color: var(--background-color);
             border: 1px solid #000;
             cursor: none;
