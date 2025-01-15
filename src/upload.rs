@@ -3,11 +3,13 @@ use rexie::Rexie;
 use std::rc::Rc;
 use web_sys::{DragEvent, Event, FileList, HtmlInputElement, MouseEvent};
 use yew::{html, AttrValue, Callback, Component, Context, Html, Properties, TargetCast};
+use yew_router::components::Link;
 
 use crate::models::VolumeMetadata;
 use crate::notify::{Notification, Notification::Warning};
 use crate::utils::web::{ask_to_persist_storage, is_web_storage_persisted};
 use crate::utils::zip::extract_ziparchive;
+use crate::Route;
 
 #[allow(dead_code)]
 pub struct ExtractionError {
@@ -134,11 +136,17 @@ impl Component for UploadModal {
             State::Complete => {
                 let previews: Vec<Html> = self.previews.iter().map(|maybe| {
                     match maybe {
-                        Ok(p) => html! {
-                            <div class="preview-item">
-                                <img src={&p.url} alt={&p.volume.title}/>
-                                <p>{&p.volume.title}</p>
-                            </div>},
+                        Ok(p) => {
+                            let volume_id = p.volume.id;
+                            html! {
+                                <Link<Route> to={Route::Reader {volume_id}}>
+                                    <div class="preview-item">
+                                        <img src={&p.url} alt={&p.volume.title}/>
+                                        <p>{&p.volume.title}</p>
+                                    </div>
+                                </Link<Route>>
+                            }
+                        }
                         Err(err) => html! {
                             <div class="preview-item">
                                 <p>{"ERROR"}</p>
