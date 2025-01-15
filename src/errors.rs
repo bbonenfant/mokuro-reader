@@ -6,6 +6,7 @@ pub enum AppError {
     InvalidMokuroFile(InvalidMokuroFileError),
     GlooFileError(gloo_file::FileReadError),
     RexieError(rexie::Error),
+    SerdeJsonError(serde_json::Error),
     SerdeWasmError(serde_wasm_bindgen::Error),
     ZipError(zip::result::ZipError),
     JsValueError(wasm_bindgen::JsValue),
@@ -23,6 +24,7 @@ impl std::fmt::Display for AppError {
             AppError::InvalidMokuroFile(e) => write!(f, "Invalid mokuro file: {:?}", e),
             AppError::GlooFileError(e) => write!(f, "Gloo file error: {}", e),
             AppError::RexieError(e) => write!(f, "Rexie error: {}", e),
+            AppError::SerdeJsonError(e) => write!(f, "Serde json error: {}", e),
             AppError::SerdeWasmError(e) => write!(f, "Serde-Wasm error: {}", e),
             AppError::ZipError(e) => write!(f, "Zip error: {}", e),
             AppError::JsValueError(e) => write!(f, "JsValue error: {:?}", e),
@@ -42,6 +44,12 @@ impl From<gloo_file::FileReadError> for AppError {
 impl From<rexie::Error> for AppError {
     fn from(error: rexie::Error) -> Self {
         AppError::RexieError(error)
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(error: serde_json::Error) -> Self {
+        AppError::SerdeJsonError(error)
     }
 }
 
