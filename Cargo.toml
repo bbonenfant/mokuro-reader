@@ -9,6 +9,7 @@ gloo-console = "0.3"
 gloo-dialogs = "0.2.0"
 gloo-events = "0.2.0"
 gloo-file = { version = "0.3", features = ["futures"] }
+gloo-timers = "0.3.0"
 implicit-clone = { version = "0.4.9", features = ["serde"] }
 js-sys = "0.3"
 rexie = "0.5.0"

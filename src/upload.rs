@@ -1,11 +1,11 @@
 use enclose::enclose;
 use rexie::Rexie;
 use std::rc::Rc;
-use wasm_bindgen::UnwrapThrowExt;
 use web_sys::{DragEvent, Event, FileList, HtmlInputElement, MouseEvent};
 use yew::{html, AttrValue, Callback, Component, Context, Html, Properties, TargetCast};
 
 use crate::models::VolumeMetadata;
+use crate::notify::{Notification, Notification::Warning};
 use crate::utils::web::{ask_to_persist_storage, is_web_storage_persisted};
 use crate::utils::zip::extract_ziparchive;
 
@@ -18,6 +18,7 @@ pub struct ExtractionError {
 #[derive(Properties, PartialEq)]
 pub struct Props {
     pub db: Rc<Rexie>,
+    pub notify: Callback<Notification>,
     pub close_modal: Callback<MouseEvent>,
 }
 
@@ -26,6 +27,7 @@ pub enum Message {
     Process(Vec<gloo_file::File>),
     Set(Vec<Result<Preview, ExtractionError>>),
     StoragePersisted(bool),
+    Notify(Notification),
 }
 
 enum State {
@@ -64,12 +66,16 @@ impl Component for UploadModal {
         let cancel_drag = Callback::from(|e: DragEvent| e.prevent_default());
         let onchange = ctx.link().callback(|e: Event| {
             let input: HtmlInputElement = e.target_unchecked_into();
-            Message::Process(upload_files(input.files()))
+            Message::Process(input.files().map_or(vec![], upload_files))
         });
         let ondrop = ctx.link().callback(|e: DragEvent| {
             e.prevent_default();
-            let file_list = e.data_transfer().unwrap().files();
-            Message::Process(upload_files(file_list))
+            if let Some(data) = e.data_transfer() {
+                Message::Process(data.files().map_or(vec![], upload_files))
+            } else {
+                let content = "Failed to extract data transfer - drag and drop functionality may be broken";
+                Message::Notify(Warning(content, content.to_string()))
+            }
         });
         Self {
             previews: vec![],
@@ -84,7 +90,7 @@ impl Component for UploadModal {
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        let Props { db, .. } = ctx.props();
+        let Props { db, notify, .. } = ctx.props();
         match msg {
             Message::Prompt => {
                 ctx.link().send_future(persist_storage());
@@ -103,6 +109,10 @@ impl Component for UploadModal {
             Message::StoragePersisted(persisted) => {
                 self.persisted = Some(persisted);
                 true
+            }
+            Message::Notify(notification) => {
+                notify.emit(notification);
+                false
             }
         }
     }
@@ -185,9 +195,10 @@ async fn check() -> Message {
 }
 
 async fn persist_storage() -> Message {
-    let response =
-        ask_to_persist_storage().await.expect_throw("failed to persist storage");
-    Message::StoragePersisted(response)
+    match ask_to_persist_storage().await {
+        Ok(response) => Message::StoragePersisted(response),
+        Err(err) => Message::Notify(Warning("failed to persist storage", format!("{:?}", err)))
+    }
 }
 
 async fn process(db: Rc<Rexie>, files: Vec<gloo_file::File>) -> Message {
@@ -204,15 +215,8 @@ async fn process(db: Rc<Rexie>, files: Vec<gloo_file::File>) -> Message {
     Message::Set(previews)
 }
 
-fn upload_files(files: Option<FileList>) -> Vec<gloo_file::File> {
-    let mut result = Vec::new();
-    if let Some(files) = files {
-        let files = js_sys::try_iter(&files)
-            .unwrap()
-            .unwrap()
-            .map(|v| web_sys::File::from(v.unwrap()))
-            .map(gloo_file::File::from);
-        result.extend(files);
-    }
-    result
+fn upload_files(files: FileList) -> Vec<gloo_file::File> {
+    (0..files.length())
+        .filter_map(|idx| files.item(idx))
+        .map(gloo_file::File::from).collect()
 }

@@ -10,6 +10,7 @@ So I decided to try to make such a tool, and this is the result.
 - [x] Mokuro Editor
 - [x] Reader Magnifying Glass
 - [ ] Volume Ordering & Filtering
+- [ ] Tracking Edits to for an "Undo Stack"
 - [ ] Add "Bookmarks" & "Chapter Markers" to Volumes
 - [ ] (Stretch) Anki Integration (with image cropping)
 
@@ -85,3 +86,16 @@ When in the reader view, press "H" to display the help banner.
 | Begin Editing Text      | "\`" (backtick)      | Double-click textbox.                                                                                                                               |
 | End Editing Text        | Escape               | Clicking outside of textbox.                                                                                                                        |
 | Select Next Textbox     | Tab                  | N/A                                                                                                                                                 |
+
+## Local Development
+
+You can run a local version of this app using the following command:
+
+```shell
+trunk serve
+```
+
+Adding the  `--no-autoreload` is also helpful when actively developing.
+
+Note: local storage is specific to the combination of hostname and port.
+Volumes stored at http://localhost:8080 will not be accessible at http://127.0.0.1:8080.

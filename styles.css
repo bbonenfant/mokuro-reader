@@ -487,3 +487,38 @@ h2, p {
         width: 100%;
     }
 }
+
+#NotificationContainer {
+    position: absolute;
+    max-height: calc(100% - 10px);
+    width: 200px;
+    top: 10px;
+    right: 10px;
+    overflow: hidden;
+
+    .warning {
+        border: 1px solid darkred;
+        background-color: indianred;
+        margin-block: 10px;
+
+        .warning-top {
+            font-size: 16px;
+            margin: 5px;
+
+            .warning-close {
+                float: right;
+                margin-top: -4px;
+                width: 12px;
+                cursor: pointer;
+            }
+        }
+
+        .warning-content {
+            font-size: 12px;
+            margin-inline: 12px;
+            text-align: left;
+            white-space: pre-line;
+            word-wrap: break-word;
+        }
+    }
+}

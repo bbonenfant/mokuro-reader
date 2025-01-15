@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde_wasm_bindgen::from_value as serde_from_wasm;
-use wasm_bindgen::{JsValue, UnwrapThrowExt};
+use wasm_bindgen::JsValue;
 use yew::AttrValue;
 
 use crate::errors::Result;
@@ -52,7 +52,7 @@ pub async fn get_settings(db: &Rc<Rexie>) -> Result<Settings> {
 }
 
 pub async fn put_settings(db: &Rc<Rexie>, settings: &Settings) -> Result<()> {
-    let value = serde_wasm_bindgen::to_value(settings).unwrap_throw();
+    let value = serde_wasm_bindgen::to_value(settings)?;
     db.transaction(&[G], TransactionMode::ReadWrite)?
         .store(G)?
         .put(&value, Some(&JsValue::from_str("settings"))).await?;
@@ -77,7 +77,7 @@ pub async fn get_page(db: Rc<Rexie>, volume_id: u32, name: AttrValue) -> Result<
 }
 
 pub async fn put_ocr(db: &Rc<Rexie>, ocr: &PageOcr, key: &JsValue) -> Result<()> {
-    let value = serde_wasm_bindgen::to_value(ocr).unwrap();
+    let value = serde_wasm_bindgen::to_value(ocr)?;
     let txn = db.transaction(&[O], TransactionMode::ReadWrite)?;
     txn.store(O)?.put(&value, Some(key)).await?;
     Ok(())
@@ -91,14 +91,14 @@ pub async fn get_page_and_ocr(db: &Rc<Rexie>, key: &JsValue) -> Result<(PageImag
 
     let ocr = txn.store(O)?;
     let ocr_value = ocr.get(key).await?;
-    Ok((page_value, serde_wasm_bindgen::from_value(ocr_value).unwrap()))
+    Ok((page_value, serde_wasm_bindgen::from_value(ocr_value)?))
 }
 
 pub async fn get_volume(db: &Rc<Rexie>, volume_id: u32) -> Result<VolumeMetadata> {
     let value = db.transaction(&[V], TransactionMode::ReadOnly)?
         .store(V)?
         .get(&volume_id.into()).await?;
-    Ok(serde_from_wasm(value).unwrap())
+    Ok(serde_from_wasm(value)?)
 }
 
 #[allow(dead_code)]
@@ -106,7 +106,7 @@ pub async fn get_all_volumes(db: Rc<Rexie>) -> Result<Vec<VolumeMetadata>> {
     let values = db.transaction(&[V], TransactionMode::ReadOnly)?
         .store(V)?
         .get_all(None, None, None, None).await?;
-    Ok(values.into_iter().map(|(_k, v)| serde_from_wasm(v).unwrap()).collect())
+    Ok(values.into_iter().filter_map(|(_k, v)| serde_from_wasm(v).ok()).collect())
 }
 
 pub async fn get_all_volumes_with_covers(db: &Rc<Rexie>) -> Result<Vec<(VolumeMetadata, PageImage)>> {
@@ -116,7 +116,7 @@ pub async fn get_all_volumes_with_covers(db: &Rc<Rexie>) -> Result<Vec<(VolumeMe
 
     let mut result = Vec::with_capacity(values.len());
     for (_k, v) in values.into_iter() {
-        let volume: VolumeMetadata = serde_from_wasm(v).expect("failed to deserialize volume metadata");
+        let volume: VolumeMetadata = serde_from_wasm(v)?;
         let key = js_sys::Array::of2(&volume.id.unwrap().into(), &volume.cover().as_str().into());
         let cover: PageImage = pages.get(&key).await?.into();
         result.push((volume, cover));
@@ -128,7 +128,7 @@ pub async fn get_all_volumes_with_covers(db: &Rc<Rexie>) -> Result<Vec<(VolumeMe
 /// put_config inserts/updates a row within the "volumes" ObjectStore.
 /// If `volume.id` is set, the object is updated.
 pub async fn put_volume(db: &Rc<Rexie>, volume: &VolumeMetadata) -> Result<u32> {
-    let config = serde_wasm_bindgen::to_value(volume).unwrap();
+    let config = serde_wasm_bindgen::to_value(volume)?;
     let txn = db.transaction(&[V], TransactionMode::ReadWrite)?;
     let volume_id = txn.store(V)?.put(&config, None).await?;
     txn.done().await?;

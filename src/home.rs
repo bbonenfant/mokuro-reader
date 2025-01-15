@@ -1,13 +1,13 @@
 use enclose::enclose;
 use rexie::Rexie;
 use std::rc::Rc;
-use wasm_bindgen::UnwrapThrowExt;
 use web_sys::MouseEvent;
 use yew::{html, AttrValue, Callback, Component, Context, Html, Properties};
 use yew_router::components::Link;
 
 use crate::icons;
 use crate::models::{Settings, VolumeMetadata};
+use crate::notify::{Notification, Notification::*};
 use crate::upload::UploadModal;
 use crate::utils::db::{delete_volume, get_all_volumes_with_covers, get_settings, put_settings, put_volume};
 use crate::Route;
@@ -17,11 +17,13 @@ const DELETE_PROMPT: &str = "Are you sure you want to delete this volume?\nThere
 #[derive(Properties, PartialEq)]
 pub struct Props {
     pub db: Rc<Rexie>,
+    pub notify: Callback<Notification>,
 }
 
 pub enum Message {
     Noop,
     Set(Settings, Vec<GalleryItem>),
+    Notify(Notification),
     CommitSettings(Settings),
     Delete(u32),
     UpdateVolume(u32, String),
@@ -87,13 +89,17 @@ impl Component for Home {
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        let Props { db } = ctx.props();
+        let Props { db, notify } = ctx.props();
         match msg {
             Message::Noop => false,
             Message::Set(settings, volumes) => {
                 self.settings = Some(settings);
                 self.volumes = volumes;
                 true
+            }
+            Message::Notify(notification) => {
+                notify.emit(notification);
+                false
             }
             Message::CommitSettings(settings) => {
                 let old_settings = self.settings.replace(settings.clone());
@@ -145,16 +151,16 @@ impl Component for Home {
 
     fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
         if first_render {
-            let Props { db } = ctx.props();
+            let Props { db, .. } = ctx.props();
             ctx.link().send_future(enclose!((db) fetch(db)))
         }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let Props { db } = ctx.props();
+        let Props { db, notify, .. } = ctx.props();
         let (delete, update) = (&self.delete_volume, &self.update_volume);
         let gallery: Html =
-            self.volumes.iter().rev().map(|v| v.render(db, delete, update)).collect();
+            self.volumes.iter().rev().map(|v| v.render(db, notify, delete, update)).collect();
         html! {<>
             <div id="HomeNavBar">
                 <div class="nav-buttons">
@@ -182,7 +188,7 @@ impl Component for Home {
             </div>
             if self.help {{ help::modal(&self.hide_help) }}
             if self.modal {
-                <UploadModal {db} close_modal={&self.hide_modal}/>
+                <UploadModal {db} {notify} close_modal={&self.hide_modal}/>
             }
         </>}
     }
@@ -192,10 +198,11 @@ impl GalleryItem {
     fn render(
         &self,
         db: &Rc<Rexie>,
+        notify: &Callback<Notification>,
         delete_cb: &Callback<u32>,
         update_cb: &Callback<(u32, String)>,
     ) -> Html {
-        let volume_id = self.volume.id.unwrap_throw();
+        let volume_id = self.volume.id.unwrap();
         let onclick = delete_cb.reform(move |_| volume_id);
         let commit = update_cb.reform(move |new_title: String| (volume_id, new_title));
         let title = &self.volume.title;
@@ -204,8 +211,8 @@ impl GalleryItem {
                 <Link<Route> to={Route::Reader {volume_id}}>
                     <img src={&self.url} alt={title}/>
                 </Link<Route>>
-                <title::EditableTitle {title} {commit}/>
-                <download::DownloadButton {db} {volume_id}/>
+                <title::EditableTitle {title} {commit} {notify}/>
+                <download::DownloadButton {db} {notify} {volume_id}/>
                 <button class="delete" {onclick}>{"Delete"}</button>
             </div>
         }
@@ -213,11 +220,20 @@ impl GalleryItem {
 }
 
 async fn fetch(db: Rc<Rexie>) -> Message {
-    let settings = get_settings(&db).await
-        .expect_throw("failed to retrieve settings from IndexDB");
+    let settings = match get_settings(&db).await {
+        Ok(settings) => settings,
+        Err(err) => return Message::Notify(
+            Warning("failed to retrieve settings from IndexedDB", err.to_string())
+        )
+    };
 
-    let pairs = get_all_volumes_with_covers(&db).await
-        .expect_throw("failed to retrieve all volumes from IndexDB");
+    let pairs = match get_all_volumes_with_covers(&db).await {
+        Ok(pairs) => pairs,
+        Err(err) => return Message::Notify(
+            Warning("failed to retrieve all volumes from IndexedDB", err.to_string())
+        )
+    };
+
     let mut items = Vec::with_capacity(pairs.len());
     for (volume, page) in pairs.into_iter() {
         let _object_url = gloo_file::ObjectUrl::from(page);
@@ -229,43 +245,54 @@ async fn fetch(db: Rc<Rexie>) -> Message {
 }
 
 async fn commit_settings(db: Rc<Rexie>, settings: Settings) -> Message {
-    put_settings(&db, &settings).await
-        .expect_throw("failed to commit settings to IndexDB");
+    if let Err(err) = put_settings(&db, &settings).await {
+        return Message::Notify(
+            Warning("failed to save settings to IndexedDB", err.to_string())
+        );
+    }
     Message::Noop
 }
 
 async fn commit_volume(db: Rc<Rexie>, volume: VolumeMetadata) -> Message {
-    put_volume(&db, &volume).await
-        .expect_throw("failed to commit volume to IndexDB");
+    if let Err(err) = put_volume(&db, &volume).await {
+        return Message::Notify(
+            Warning("failed to save volume to IndexedDB", err.to_string())
+        );
+    }
     fetch(db).await
 }
 
 async fn delete(db: Rc<Rexie>, volume_id: u32) -> Message {
-    delete_volume(&db, volume_id).await
-        .expect_throw("failed to delete volume from IndexDB");
+    if let Err(err) = delete_volume(&db, volume_id).await {
+        return Message::Notify(
+            Warning("failed to delete volume from IndexedDB", err.to_string())
+        );
+    }
     fetch(db).await
 }
 
 mod download {
+    use crate::notify::Notification;
+    use crate::notify::Notification::Warning;
+    use crate::utils::zip::create_ziparchive;
     use enclose::enclose;
     use rexie::Rexie;
     use std::cmp::PartialEq;
     use std::rc::Rc;
-    use wasm_bindgen::UnwrapThrowExt;
     use web_sys::MouseEvent;
     use yew::{html, AttrValue, Callback, Component, Context, Html, Properties};
-
-    use crate::utils::zip::create_ziparchive;
 
     #[derive(Properties, PartialEq)]
     pub struct Props {
         pub db: Rc<Rexie>,
+        pub notify: Callback<Notification>,
         pub volume_id: u32,
     }
 
     pub enum Message {
         Request,
         Set(gloo_file::File),
+        Notify(Notification),
     }
 
 
@@ -299,7 +326,7 @@ mod download {
         }
 
         fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-            let Props { db, volume_id } = ctx.props();
+            let Props { db, notify, volume_id } = ctx.props();
             match msg {
                 Message::Request => {
                     self.state = State::Processing;
@@ -313,6 +340,10 @@ mod download {
                     let url = AttrValue::from(_url_object.to_string());
                     self.state = State::Ready(File { _url_object, file, url });
                     true
+                }
+                Message::Notify(notification) => {
+                    notify.emit(notification);
+                    false
                 }
             }
         }
@@ -336,9 +367,10 @@ mod download {
     }
 
     async fn fetch(db: Rc<Rexie>, volume_id: u32) -> Message {
-        let file = create_ziparchive(db.clone(), volume_id).await
-            .expect_throw("failed to create zip archive for download");
-        Message::Set(file)
+        match create_ziparchive(db.clone(), volume_id).await {
+            Ok(file) => Message::Set(file),
+            Err(err) => Message::Notify(Warning("failed to create zip archive for download", err.to_string()))
+        }
     }
 }
 
@@ -529,8 +561,8 @@ mod settings {
 }
 
 mod title {
+    use crate::notify::{Notification, Notification::Warning};
     use crate::utils::web::set_caret;
-    use wasm_bindgen::UnwrapThrowExt;
     use web_sys::{FocusEvent, KeyboardEvent, MouseEvent};
     use yew::{html, AttrValue, Callback, Component, Context, Html, NodeRef, Properties};
 
@@ -538,6 +570,7 @@ mod title {
     pub struct Props {
         pub title: AttrValue,
         pub commit: Callback<String>,
+        pub notify: Callback<Notification>,
     }
 
     pub struct EditableTitle {
@@ -573,7 +606,7 @@ mod title {
         }
 
         fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-            let Props { title, commit, .. } = ctx.props();
+            let Props { title, commit, notify } = ctx.props();
             match msg {
                 Message::BeginEdit => {
                     self.editing = true;
@@ -582,15 +615,24 @@ mod title {
                 }
                 Message::EndEdit => {
                     self.editing = false;
-                    let element = self.node_ref.cast::<web_sys::HtmlElement>()
-                        .expect_throw("could not resolve node reference");
+                    let element = match self.node_ref.cast::<web_sys::HtmlElement>() {
+                        Some(element) => element,
+                        None => {
+                            let warning = Warning(
+                                "failed to commit title change",
+                                "could not resolve volume title node reference".to_string(),
+                            );
+                            notify.emit(warning);
+                            return true;
+                        }
+                    };
                     let text = element.text_content();
                     if let Some(new_title) = text {
                         if new_title != title.as_str() {
                             commit.emit(new_title)
                         }
                     }
-                    element.blur().expect_throw("failed to remove focus");
+                    element.blur().ok();
                     true
                 }
             }

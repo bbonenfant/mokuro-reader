@@ -771,6 +771,7 @@ dependencies = [
  "gloo-dialogs 0.2.0",
  "gloo-events 0.2.0",
  "gloo-file 0.3.0",
+ "gloo-timers 0.3.0",
  "implicit-clone",
  "js-sys",
  "rexie",

@@ -1,6 +1,7 @@
+/// Convenience functions to avoid repeating expect logic.
 use wasm_bindgen::UnwrapThrowExt;
 
-/// Convenience functions to avoid repeating expect logic.
+
 #[inline(always)]
 pub fn window() -> web_sys::Window {
     web_sys::window().expect_throw("Can't find the global Window")
@@ -11,6 +12,11 @@ pub fn document() -> web_sys::Document {
     window().document().expect_throw("Can't find the global Document")
 }
 
+#[inline(always)]
+pub fn query_selector(selector: &'static str) -> web_sys::Element {
+    const EXPECT: &'static str = "Failed to query document for selector";
+    document().query_selector(selector).expect_throw(EXPECT).expect_throw(EXPECT)
+}
 
 pub async fn is_web_storage_persisted() -> Result<bool, wasm_bindgen::JsValue> {
     let promise = window().navigator().storage().persisted()?;
@@ -52,13 +58,13 @@ pub fn set_caret(node: &yew::NodeRef) {
     let range = document().create_range();
     if let (Some(element), Ok(range)) = (element, range) {
         element.child_nodes().get(0).map(|child| {
-            range.set_start(&child, 0).unwrap_throw();
+            let _ = range.set_start(&child, 0);
             range.collapse_with_to_start(true);
 
-            window().get_selection().unwrap_throw().map(|selection| {
-                selection.remove_all_ranges().unwrap_throw();
-                selection.add_range(&range).unwrap_throw();
-            })
+            if let Ok(Some(selection)) = window().get_selection() {
+                let _ = selection.remove_all_ranges();
+                let _ = selection.add_range(&range);
+            }
         });
     }
 }

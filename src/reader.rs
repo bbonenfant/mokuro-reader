@@ -2,11 +2,11 @@ use std::rc::Rc;
 
 use enclose::enclose;
 use rexie::Rexie;
-use wasm_bindgen::UnwrapThrowExt;
-use web_sys::{Event, HtmlElement, KeyboardEvent, MouseEvent};
+use web_sys::{Event, KeyboardEvent, MouseEvent};
 use yew::{html, Callback, Component, Context, Html, NodeRef, Properties};
 
 use crate::models::VolumeMetadata;
+use crate::notify::{Notification, Notification::Warning as Warning};
 use crate::reader::window::{Rect, WindowState};
 use crate::utils::{
     db::{get_volume, put_volume},
@@ -24,11 +24,13 @@ pub struct Cursor {
 #[derive(Properties, PartialEq)]
 pub struct ReaderProps {
     pub db: Rc<Rexie>,
+    pub notify: Callback<Notification>,
     pub volume_id: u32,
 }
 
 pub enum ReaderMessage {
     Set(VolumeMetadata),
+    Notify(Notification),
     Commit(sidebar::SidebarData),
     Focus,
     HelpToggle,
@@ -89,6 +91,9 @@ impl Component for Reader {
                     "KeyS" => Some(Self::Message::SidebarToggle),
                     "KeyX" => Some(Self::Message::PrevPage),
                     "KeyZ" => Some(Self::Message::NextPage),
+                    "Comma" => cfg!(debug_assertions).then_some(
+                        Self::Message::Notify(Warning("Test Error", "".to_owned()))
+                    ),
                     _ => None
                 }
             }
@@ -132,19 +137,13 @@ impl Component for Reader {
 
     fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
         if first_render {
-            let ReaderProps { db, volume_id } = ctx.props();
-            ctx.link().send_future(enclose!((db, volume_id) async move {
-                let volume = get_volume(&db, volume_id).await
-                    .expect_throw("failed to get volume from IndexedDB");
-                Self::Message::Set(volume)
-            }))
+            let ReaderProps { db, volume_id, .. } = ctx.props();
+            ctx.link().send_future(enclose!((db, volume_id) Self::fetch(db, volume_id)));
         }
 
         let element = focused_element();
         if element.is_none() || element.is_some_and(|elm| elm.tag_name() == "BODY") {
-            if let Some(elm) = self.node.cast::<HtmlElement>() {
-                elm.focus().expect_throw("failed to focus #Reader");
-            }
+            focus(&self.node);
         }
 
         // On every rerender, check to see if the image proportions has changed.
@@ -157,6 +156,10 @@ impl Component for Reader {
             ReaderMessage::Set(volume) => {
                 let previous = self.volume.replace(volume);
                 previous != self.volume
+            }
+            ReaderMessage::Notify(notification) => {
+                ctx.props().notify.emit(notification);
+                false
             }
             ReaderMessage::Commit(data) => {
                 let sidebar::SidebarData {
@@ -252,7 +255,7 @@ impl Component for Reader {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         if let Some(volume) = &self.volume {
-            let ReaderProps { db, volume_id } = ctx.props();
+            let ReaderProps { db, notify, volume_id, .. } = ctx.props();
             let (page_right, page_left) = volume.select_pages();
             let magnifier = if self.cursor.magnify {
                 volume.magnifier.render(&self.cursor.position, &self.node_left, &self.node_right)
@@ -295,6 +298,7 @@ impl Component for Reader {
                 if let Some(name) = page_left {
                     <page::Page
                         {db}
+                        {notify}
                         {volume_id}
                         {name}
                         node_ref={&self.node_left}
@@ -307,6 +311,7 @@ impl Component for Reader {
                 if let Some(name) = page_right {
                     <page::Page
                         {db}
+                        {notify}
                         {volume_id}
                         {name}
                         node_ref={&self.node_right}
@@ -360,9 +365,21 @@ fn help(editing: bool) -> Html {
 impl Reader {
     async fn commit_volume(db: Rc<Rexie>, volume: VolumeMetadata) -> ReaderMessage {
         // gloo_console::log!(format!("updating volume ({id} - {})", volume.title));
-        put_volume(&db, &volume).await
-            .expect_throw("failed to update volume in IndexedDB");
-        ReaderMessage::Set(volume)
+        match put_volume(&db, &volume).await {
+            Ok(_) => ReaderMessage::Set(volume),
+            Err(err) => ReaderMessage::Notify(
+                Warning("failed to save volume to IndexedDB", err.to_string())
+            )
+        }
+    }
+
+    async fn fetch(db: Rc<Rexie>, volume_id: u32) -> ReaderMessage {
+        match get_volume(&db, volume_id).await {
+            Ok(volume) => { ReaderMessage::Set(volume) }
+            Err(err) => ReaderMessage::Notify(
+                Warning("failed to retrieve from IndexedDB", err.to_string())
+            )
+        }
     }
 }
 
@@ -422,11 +439,11 @@ mod magnifier {
             let background = {
                 // css format: url() position / size repeat
                 let left_ = left_img.map(|element| {
-                    let url = element.get_attribute("src").unwrap();
+                    let url = element.get_attribute("src").unwrap_or("".to_owned());
                     format!("url({url}) {x_shift}px {y_shift}px / {z_width}px {z_height}px no-repeat")
                 });
                 let right_ = right_img.map(|element| {
-                    let url = element.get_attribute("src").unwrap();
+                    let url = element.get_attribute("src").unwrap_or("".to_owned());
                     let x_shift = if single_page { x_shift } else {
                         center_x - (((x - img_width) * zoom) / 100)
                     };
@@ -454,11 +471,12 @@ mod page {
 
     use enclose::enclose;
     use rexie::Rexie;
-    use wasm_bindgen::{JsCast, UnwrapThrowExt};
+    use wasm_bindgen::JsCast;
     use web_sys::{ClipboardEvent, MouseEvent};
     use yew::{html, AttrValue, Callback, Component, Context, Event, Html, NodeRef, Properties};
 
     use crate::models::{OcrBlock, PageImage, PageOcr};
+    use crate::notify::Notification;
     use crate::utils::db::{get_page_and_ocr, put_ocr};
     use crate::utils::web::{focus, get_selection};
 
@@ -468,6 +486,7 @@ mod page {
     #[derive(Properties, PartialEq)]
     pub struct Props {
         pub db: Rc<Rexie>,
+        pub notify: Callback<Notification>,
         pub volume_id: u32,
         pub name: AttrValue,
         pub node_ref: NodeRef,
@@ -479,6 +498,7 @@ mod page {
 
     pub enum PageMessage {
         Set(PageImage, PageOcr),
+        Notify(Notification),
         Refresh,
         ReportBlur(NodeRef),
         DeleteBlock(AttrValue),
@@ -519,16 +539,18 @@ mod page {
             let onmousemove =
                 ctx.link().callback(|e: MouseEvent| Self::Message::UpdateDrag(e.x(), e.y()));
             let oncopy = Callback::from(|e: Event| {
-                let e = e.dyn_into::<ClipboardEvent>()
-                    .expect_throw("couldn't convert to ClipboardEvent");
-                let selection = get_selection().and_then(|s| s.to_string().as_string());
-                if let Some(text) = selection {
-                    if let Some(clipboard) = e.clipboard_data() {
-                        clipboard.set_data("text/plain", &text.replace('\n', ""))
-                            .expect("couldn't write to clipboard");
-                        e.prevent_default();
+                if let Ok(event) = e.dyn_into::<ClipboardEvent>() {
+                    let selection =
+                        get_selection().and_then(|s| s.to_string().as_string());
+                    if let Some(text) = selection {
+                        if let Some(clipboard) = event.clipboard_data() {
+                            let data = text.replace('\n', "");
+                            if clipboard.set_data("text/plain", &data).is_ok() {
+                                event.prevent_default();
+                            }
+                        }
                     }
-                }
+                };
             });
             let report_blur =
                 ctx.link().callback(|node| Self::Message::ReportBlur(node));
@@ -569,15 +591,19 @@ mod page {
                     self.ocr = ocr;
                     true
                 }
+                PageMessage::Notify(notification) => {
+                    ctx.props().notify.emit(notification);
+                    false
+                }
                 PageMessage::Refresh => true,
                 PageMessage::ReportBlur(node) => {
                     self.last_focus = Some(node);
                     false
                 }
                 PageMessage::DeleteBlock(uuid) => {
-                    let index = self.ocr.blocks.iter()
-                        .position(|b| b.uuid == uuid).unwrap();
-                    self.ocr.blocks.remove(index);
+                    if let Some(index) = self.ocr.blocks.iter().position(|b| b.uuid == uuid) {
+                        self.ocr.blocks.remove(index);
+                    };
 
                     let ocr = self.ocr.clone();
                     let Props { db, volume_id, name, .. } = ctx.props();
@@ -592,9 +618,9 @@ mod page {
                     true
                 }
                 PageMessage::UpdateBlock(block) => {
-                    let index = self.ocr.blocks.iter()
-                        .position(|b| b.uuid == block.uuid).unwrap();
-                    self.ocr.blocks[index] = block;
+                    if let Some(index) = self.ocr.blocks.iter().position(|b| b.uuid == block.uuid) {
+                        self.ocr.blocks[index] = block;
+                    };
 
                     let ocr = self.ocr.clone();
                     let Props { db, volume_id, name, .. } = ctx.props();
@@ -658,6 +684,7 @@ mod page {
             let onmouseup = if *mutable { &self.end_drag } else { &noop };
             let onmousemove = if dragging { &self.onmousemove } else { &noop };
             let onmouseout = if dragging { &self.end_drag } else { &noop };
+            let notify = ctx.link().callback(|n| PageMessage::Notify(n));
 
             let new_block = if let Some(drag) = &self.drag.filter(|d| d.dirty()) {
                 let style = format!(
@@ -683,6 +710,7 @@ mod page {
                             bbox={*bbox}
                             {scale}
                             block={block.clone()}
+                            notify={&notify}
                             commit_block={&self.commit}
                             delete_block={&self.delete}
                             oncopy={&self.oncopy}
@@ -698,13 +726,23 @@ mod page {
     impl Page {
         async fn fetch(db: Rc<Rexie>, id: u32, name: AttrValue) -> PageMessage {
             let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
-            let (image, ocr) = get_page_and_ocr(&db, &key.into()).await
-                .expect_throw("failed to get Page and Ocr data from IndexedDB");
-            PageMessage::Set(image, ocr)
+            match get_page_and_ocr(&db, &key.into()).await {
+                Ok((image, ocr)) => PageMessage::Set(image, ocr),
+                Err(err) => PageMessage::Notify(
+                    Notification::Warning(
+                        "failed to retrieve Page and Ocr data from IndexedDB",
+                        err.to_string(),
+                    )
+                )
+            }
         }
         async fn commit_ocr(db: Rc<Rexie>, id: u32, name: AttrValue, ocr: PageOcr) -> PageMessage {
             let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
-            put_ocr(&db, &ocr, &key).await.unwrap_throw();
+            if let Err(err) = put_ocr(&db, &ocr, &key).await {
+                return PageMessage::Notify(
+                    Notification::Warning("failed to save OCR", err.to_string())
+                );
+            };
             PageMessage::Refresh
         }
 
@@ -733,11 +771,12 @@ mod page {
 
 mod ocr {
     use enclose::enclose;
-    use wasm_bindgen::{JsCast, UnwrapThrowExt};
+    use wasm_bindgen::JsCast;
     use web_sys::{Event, FocusEvent, KeyboardEvent, MouseEvent};
     use yew::{html, AttrValue, Callback, Component, Context, Html, NodeRef, Properties};
 
     use crate::models::OcrBlock;
+    use crate::notify::Notification;
     use crate::utils::timestamp;
     use crate::utils::web::{get_bounding_rect, set_caret};
 
@@ -753,6 +792,7 @@ mod ocr {
         pub mutable: bool,
         pub scale: f64,
 
+        pub notify: Callback<Notification>,
         pub commit_block: Callback<OcrBlock>,
         pub delete_block: Callback<AttrValue>,
         pub oncopy: Callback<Event>,
@@ -956,29 +996,14 @@ mod ocr {
                     } else { false }
                 }
                 Self::Message::Autosize => {
-                    let element = self.node_ref.cast::<web_sys::Element>()
-                        .expect_throw("could not resolve node reference");
-                    let (mut left, mut top, mut right, mut bottom) = {
-                        let child = element.children().get_with_index(0).unwrap();
-                        let bbox = child.get_bounding_client_rect();
-                        (bbox.left(), bbox.top(), bbox.right(), bbox.bottom())
+                    let (left, right, top, bottom) = match self.get_autosize_bounds() {
+                        Ok(bounds) => bounds,
+                        Err(err) => {
+                            Self::notify(ctx, "failed to Autosize OCR element", err);
+                            return false;
+                        }
                     };
-                    for idx in 1..element.child_element_count() {
-                        let child = element.children().get_with_index(idx).unwrap();
-                        let bbox = child.get_bounding_client_rect();
-                        left = left.min(bbox.left());
-                        top = top.min(bbox.top());
-                        right = right.max(bbox.right());
-                        bottom = bottom.max(bbox.bottom());
-                    }
-
-                    let Props {
-                        bbox,
-                        block,
-                        commit_block,
-                        scale,
-                        ..
-                    } = ctx.props();
+                    let Props { bbox, block, scale, .. } = ctx.props();
                     let box_ = (
                         ((left - bbox.rect.left) * scale).round() as u32,
                         ((top - bbox.rect.top) * scale).round() as u32,
@@ -987,7 +1012,7 @@ mod ocr {
                     );
                     let mut block = block.clone();
                     block.box_ = box_;
-                    commit_block.emit(block.to_owned());
+                    ctx.props().commit_block.emit(block.to_owned());
                     true
                 }
                 Self::Message::Move(direction) => {
@@ -1025,12 +1050,19 @@ mod ocr {
                 }
                 Self::Message::CommitLines => {
                     let mut block = ctx.props().block.clone();
-                    let children = self.html_element().children();
+                    let html_element = match self.html_element() {
+                        Ok(element) => element,
+                        Err(err) => {
+                            Self::notify(ctx, "failed to save OCR line", err);
+                            return false;
+                        }
+                    };
+                    let children = html_element.children();
 
                     // Grab the lines from only the <p> nodes. This may be overly restrictive.
                     // TODO: Check how browsers handle newlines in contenteditable nodes.
                     let mut lines: Vec<AttrValue> = (0..children.length())
-                        .map(|idx| children.item(idx).unwrap())
+                        .map(|idx| children.item(idx)).flatten()
                         .filter(|elm| elm.tag_name() == "P")
                         .filter_map(|elm| elm.text_content().map(|t| t.into()))
                         .collect();
@@ -1038,7 +1070,7 @@ mod ocr {
                     // This is in case the user writes to the div node directly instead of
                     // writing to a <p> node. This can happen if the user deletes all
                     // the <p> nodes.
-                    if let Some(node) = self.html_element().child_nodes().get(0) {
+                    if let Some(node) = html_element.child_nodes().get(0) {
                         if node.node_type() == web_sys::Node::TEXT_NODE {
                             if let Some(text) = node.text_content() {
                                 lines.insert(0, text.into())
@@ -1065,9 +1097,13 @@ mod ocr {
             if self.should_be_focused {
                 // Focus on the first <p> tag. This minimizes the chance that the
                 // user will write text to the <div> tag.
-                self.html_element().children().get_with_index(0).map(|elm|
-                    elm.dyn_into::<web_sys::HtmlElement>().unwrap().focus().ok()
-                );
+                if let Ok(html_element) = self.html_element() {
+                    if let Some(child) = html_element.children().get_with_index(0) {
+                        if let Ok(elm) = child.dyn_into::<web_sys::HtmlElement>() {
+                            elm.focus().ok();
+                        }
+                    }
+                };
             }
         }
 
@@ -1144,9 +1180,35 @@ mod ocr {
     }
 
     impl TextBlock {
-        fn html_element(&self) -> web_sys::HtmlElement {
+        fn get_autosize_bounds(&self) -> Result<(f64, f64, f64, f64), &str> {
+            let element = self.node_ref.cast::<web_sys::Element>()
+                .ok_or("could not resolve node reference")?;
+
+            let first_child = element.children().get_with_index(0)
+                .ok_or("element has no children")?;
+            let (mut left, mut top, mut right, mut bottom) = {
+                let bbox = first_child.get_bounding_client_rect();
+                (bbox.left(), bbox.top(), bbox.right(), bbox.bottom())
+            };
+            for idx in 1..element.child_element_count() {
+                if let Some(child) = element.children().get_with_index(idx) {
+                    let bbox = child.get_bounding_client_rect();
+                    left = left.min(bbox.left());
+                    top = top.min(bbox.top());
+                    right = right.max(bbox.right());
+                    bottom = bottom.max(bbox.bottom());
+                };
+            }
+            Ok((left, top, right, bottom))
+        }
+
+        fn html_element(&self) -> Result<web_sys::HtmlElement, &str> {
             self.node_ref.cast::<web_sys::HtmlElement>()
-                .expect_throw("could not resolve node reference")
+                .ok_or("could not resolve node reference")
+        }
+
+        fn notify(ctx: &Context<Self>, description: &'static str, error: &str) {
+            ctx.props().notify.emit(Notification::Warning(description, error.to_owned()))
         }
 
         fn style(&self, bbox: &BoundingBox, block: &OcrBlock, scale: f64) -> String {

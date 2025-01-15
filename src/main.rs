@@ -2,11 +2,12 @@ use std::rc::Rc;
 
 use rexie::Rexie;
 use wasm_bindgen::UnwrapThrowExt;
-use yew::{html, Callback, Component, Context, Html};
+use yew::{html, html::Scope, Callback, Component, Context, Html};
 use yew_router::{BrowserRouter, Routable, Switch};
 
 use crate::errors::Result;
 use crate::home::Home;
+use crate::notify::{Notification, NotificationProvider};
 use crate::reader::Reader;
 use crate::utils::db::create_database;
 
@@ -17,13 +18,16 @@ mod upload;
 mod home;
 mod reader;
 mod icons;
+mod notify;
 
 struct App {
     db: Option<Rc<Rexie>>,
+    notify: Option<Scope<NotificationProvider>>,
 }
 
 enum Message {
-    Set(Rc<Rexie>)
+    SetDB(Rc<Rexie>),
+    SetScope(Scope<NotificationProvider>),
 }
 
 impl Component for App {
@@ -31,13 +35,17 @@ impl Component for App {
     type Properties = ();
 
     fn create(_ctx: &Context<Self>) -> Self {
-        Self { db: None }
+        Self { db: None, notify: None }
     }
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
-            Message::Set(db) => {
+            Message::SetDB(db) => {
                 self.db = Some(db);
+                true
+            }
+            Message::SetScope(scope) => {
+                self.notify = Some(scope);
                 true
             }
         }
@@ -50,24 +58,29 @@ impl Component for App {
     }
 
     fn view(&self, _ctx: &Context<Self>) -> Html {
-        if let Some(db) = &self.db {
-            let db = db.clone();
-            let render = Callback::from(
-                move |route| switch(&db, route)
-            );
-            html! {
-                <BrowserRouter>
-                    <Switch<Route> {render} />
-                </BrowserRouter>
+        match (&self.db, &self.notify) {
+            (Some(db), Some(scope)) => {
+                let db = db.clone();
+                let scope = scope.clone();
+                let render = Callback::from(move |route| {
+                    let notify = scope.callback(|msg| notify::Message::Notify(msg));
+                    switch(&db, route, notify)
+                });
+                html! {
+                    <BrowserRouter>
+                        <Switch<Route> {render}/>
+                    </BrowserRouter>
+                }
             }
-        } else { Html::default() }
+            _ => { Html::default() }
+        }
     }
 }
 
 async fn initialize() -> Message {
     let db =
         Rc::new(create_database().await.expect_throw("failed to initialize database"));
-    Message::Set(db)
+    Message::SetDB(db)
 }
 
 
@@ -82,14 +95,18 @@ enum Route {
     NotFound,
 }
 
-fn switch(db: &Rc<Rexie>, route: Route) -> Html {
+fn switch(db: &Rc<Rexie>, route: Route, notify: Callback<Notification>) -> Html {
     match route {
-        Route::Home => html! { <Home {db}/> },
-        Route::Reader { volume_id } => html! { <Reader {db} {volume_id}/> },
+        Route::Home => html! { <Home {db} {notify}/> },
+        Route::Reader { volume_id } => html! { <Reader {db} {notify} {volume_id} /> },
         Route::NotFound => html! { <h1>{ "404" }</h1> },
     }
 }
 
 fn main() {
-    yew::Renderer::<App>::new().render();
+    let app =
+        yew::Renderer::<App>::with_root(utils::web::query_selector("#App")).render();
+    let notifier =
+        yew::Renderer::<NotificationProvider>::with_root(utils::web::query_selector("#NotificationContainer")).render();
+    app.send_message(Message::SetScope(notifier.clone()));
 }
