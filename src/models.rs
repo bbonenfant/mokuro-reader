@@ -4,6 +4,9 @@ use yew::AttrValue;
 pub use magnifier::MagnifierSettings;
 pub use reader_state::ReaderState;
 
+pub type VolumeId = usize;
+
+
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct Settings {
     pub magnifier: MagnifierSettings,
@@ -11,8 +14,15 @@ pub struct Settings {
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct VolumeMetadata {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<u32>,
+    /// IndexedDB specifies that all auto-incrementing keys start at 1,
+    /// meaning that we can use 0u64 as our None value without complicating
+    /// the model with an Option<_> type which can only be unset when a volume
+    /// is uploaded. Maximum value of the key is 2^(53) + 1 which is within
+    /// the bounds of usize (used it place of u64 as u64 is represented as a
+    /// BigInt JsValue.
+    /// ref: w3c.github.io/IndexedDB/#key-generator-construct
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub id: VolumeId,
     pub version: AttrValue,
     pub created_at: AttrValue,
     pub modified_at: AttrValue,
@@ -24,6 +34,7 @@ pub struct VolumeMetadata {
     // Pages is an array of (page_name, ocr_name) pairs.
     pub pages: Box<[(AttrValue, AttrValue)]>,
 
+    #[serde(default)]
     cover: Option<AttrValue>,
     #[serde(default)]
     pub hide_sidebar: bool,
@@ -34,6 +45,8 @@ pub struct VolumeMetadata {
     #[serde(default)]
     pub reader_state: ReaderState,
 }
+
+fn is_zero(value: &VolumeId) -> bool { *value == 0 }
 
 fn default_line_height() -> f64 { 1.0f64 }
 

@@ -6,7 +6,7 @@ use rexie::Rexie;
 use wasm_bindgen::UnwrapThrowExt;
 use zip::{read::ZipArchive, result::ZipError, write::{SimpleFileOptions, ZipWriter}};
 
-use crate::models::{PageImage, PageOcr, VolumeMetadata};
+use crate::models::{PageImage, PageOcr, VolumeId, VolumeMetadata};
 use crate::utils::db::{get_page_and_ocr, get_settings, get_volume, put_volume, start_bulk_write_txn};
 
 const METADATA_FILE: &str = "mokuro-metadata.json";
@@ -27,8 +27,8 @@ pub async fn extract_ziparchive(
             let data = read_zipfile(&mut archive, METADATA_FILE)?;
             serde_json::from_slice::<VolumeMetadata>(&data).unwrap_throw()
         };
-        volume.id = None;  // ensure id is not specified. IndexDB determines this.
-        volume.id = Some(put_volume(db, &volume).await?);
+        volume.id = 0;  // ensure id is not specified. IndexDB determines this.
+        volume.id = put_volume(db, &volume).await?;
         volume.magnifier = global_settings.magnifier;
         volume
     };
@@ -39,7 +39,7 @@ pub async fn extract_ziparchive(
         PageImage::new(cover, &cover_data[..]).into()
     };
 
-    let id = volume.id.unwrap_throw().into();
+    let id = volume.id.into();
     let (txn, pages_store, ocr_store) = start_bulk_write_txn(db)?;
     for (page_name, ocr_name) in volume.pages.iter() {
         let key = js_sys::Array::of2(&id, &page_name.as_str().into());
@@ -65,7 +65,7 @@ pub async fn extract_ziparchive(
 /// mokuro IndexedDB. The resultant gloo_file::File is a JS object that
 /// can then be downloaded through the browser.
 pub async fn create_ziparchive(
-    db: Rc<Rexie>, volume_id: u32,
+    db: Rc<Rexie>, volume_id: VolumeId,
 ) -> crate::Result<gloo_file::File> {
     let volume: VolumeMetadata = get_volume(&db, volume_id).await?;
 
@@ -75,14 +75,14 @@ pub async fn create_ziparchive(
 
     let metadata = {
         let mut volume = volume.clone();
-        volume.id = None;
+        volume.id = 0;
         serde_json::to_vec(&volume).unwrap_throw()
     };
     write_zipfile(&mut archive, METADATA_FILE, &metadata, options)
         .expect_throw("failed to write mokuro-config.json to zip archive");
     archive.add_directory("_ocr/", options)?;
 
-    let id = volume.id.unwrap_throw().into();
+    let id = volume.id.into();
     for (page_name, ocr_name) in volume.pages.iter() {
         let key = js_sys::Array::of2(&id, &page_name.as_str().into());
         let (image, ocr) = get_page_and_ocr(&db.clone(), &key.into()).await?;

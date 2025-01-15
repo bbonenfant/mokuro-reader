@@ -7,6 +7,7 @@ use yew_router::{BrowserRouter, Routable, Switch};
 
 use crate::errors::Result;
 use crate::home::Home;
+use crate::models::VolumeId;
 use crate::notify::{Notification, NotificationProvider};
 use crate::reader::Reader;
 use crate::utils::db::create_database;
@@ -89,7 +90,7 @@ enum Route {
     #[at("/")]
     Home,
     #[at("/volume/:volume_id/reader")]
-    Reader { volume_id: u32 },
+    Reader { volume_id: VolumeId },
     #[not_found]
     #[at("/404")]
     NotFound,

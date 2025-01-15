@@ -6,7 +6,7 @@ use wasm_bindgen::JsValue;
 use yew::AttrValue;
 
 use crate::errors::Result;
-use crate::models::{PageImage, PageOcr, Settings, VolumeMetadata};
+use crate::models::{PageImage, PageOcr, Settings, VolumeId, VolumeMetadata};
 
 const G: &str = "global";
 const O: &str = "ocr";
@@ -69,7 +69,7 @@ pub fn start_bulk_write_txn(db: &Rc<Rexie>) -> Result<(Transaction, Store, Store
 }
 
 #[allow(dead_code)]
-pub async fn get_page(db: Rc<Rexie>, volume_id: u32, name: AttrValue) -> Result<PageImage> {
+pub async fn get_page(db: Rc<Rexie>, volume_id: VolumeId, name: AttrValue) -> Result<PageImage> {
     let key = js_sys::Array::of2(&volume_id.into(), &name.as_str().into());
     let txn = db.transaction(&[P], TransactionMode::ReadOnly)?;
     let pages = txn.store(P)?;
@@ -94,7 +94,7 @@ pub async fn get_page_and_ocr(db: &Rc<Rexie>, key: &JsValue) -> Result<(PageImag
     Ok((page_value, serde_wasm_bindgen::from_value(ocr_value)?))
 }
 
-pub async fn get_volume(db: &Rc<Rexie>, volume_id: u32) -> Result<VolumeMetadata> {
+pub async fn get_volume(db: &Rc<Rexie>, volume_id: VolumeId) -> Result<VolumeMetadata> {
     let value = db.transaction(&[V], TransactionMode::ReadOnly)?
         .store(V)?
         .get(&volume_id.into()).await?;
@@ -117,7 +117,7 @@ pub async fn get_all_volumes_with_covers(db: &Rc<Rexie>) -> Result<Vec<(VolumeMe
     let mut result = Vec::with_capacity(values.len());
     for (_k, v) in values.into_iter() {
         let volume: VolumeMetadata = serde_from_wasm(v)?;
-        let key = js_sys::Array::of2(&volume.id.unwrap().into(), &volume.cover().as_str().into());
+        let key = js_sys::Array::of2(&volume.id.into(), &volume.cover().as_str().into());
         let cover: PageImage = pages.get(&key).await?.into();
         result.push((volume, cover));
     }
@@ -127,17 +127,17 @@ pub async fn get_all_volumes_with_covers(db: &Rc<Rexie>) -> Result<Vec<(VolumeMe
 
 /// put_config inserts/updates a row within the "volumes" ObjectStore.
 /// If `volume.id` is set, the object is updated.
-pub async fn put_volume(db: &Rc<Rexie>, volume: &VolumeMetadata) -> Result<u32> {
+pub async fn put_volume(db: &Rc<Rexie>, volume: &VolumeMetadata) -> Result<VolumeId> {
     let config = serde_wasm_bindgen::to_value(volume)?;
     let txn = db.transaction(&[V], TransactionMode::ReadWrite)?;
     let volume_id = txn.store(V)?.put(&config, None).await?;
     txn.done().await?;
-    Ok(volume_id.as_f64().unwrap() as u32)
+    Ok(volume_id.as_f64().unwrap() as VolumeId)
 }
 
 /// delete_volume cascade deletes the volume with matching volume_id,
 ///   removing all images and ocr data.
-pub async fn delete_volume(db: &Rc<Rexie>, volume_id: u32) -> Result<()> {
+pub async fn delete_volume(db: &Rc<Rexie>, volume_id: VolumeId) -> Result<()> {
     let volume = get_volume(db, volume_id).await?;
     let txn = db.transaction(&[V, O, P], TransactionMode::ReadWrite)?;
     let id = volume_id.into();

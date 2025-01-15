@@ -6,7 +6,7 @@ use yew::{html, AttrValue, Callback, Component, Context, Html, Properties};
 use yew_router::components::Link;
 
 use crate::icons;
-use crate::models::{Settings, VolumeMetadata};
+use crate::models::{Settings, VolumeId, VolumeMetadata};
 use crate::notify::{Notification, Notification::*};
 use crate::upload::UploadModal;
 use crate::utils::db::{delete_volume, get_all_volumes_with_covers, get_settings, put_settings, put_volume};
@@ -25,8 +25,8 @@ pub enum Message {
     Set(Settings, Vec<GalleryItem>),
     Notify(Notification),
     CommitSettings(Settings),
-    Delete(u32),
-    UpdateVolume(u32, String),
+    Delete(VolumeId),
+    UpdateVolume(VolumeId, String),
     HideHelp,
     ShowHelp,
     HideModal,
@@ -49,8 +49,8 @@ pub struct Home {
     volumes: Vec<GalleryItem>,
 
     commit_settings: Callback<Settings>,
-    delete_volume: Callback<u32>,
-    update_volume: Callback<(u32, String)>,
+    delete_volume: Callback<VolumeId>,
+    update_volume: Callback<(VolumeId, String)>,
     hide_help: Callback<MouseEvent>,
     show_help: Callback<MouseEvent>,
     hide_modal: Callback<MouseEvent>,
@@ -99,7 +99,7 @@ impl Component for Home {
             }
             Message::Notify(notification) => {
                 notify.emit(notification);
-                false
+                true
             }
             Message::CommitSettings(settings) => {
                 let old_settings = self.settings.replace(settings.clone());
@@ -116,7 +116,7 @@ impl Component for Home {
             }
             Message::UpdateVolume(volume_id, title) => {
                 let pick = self.volumes.iter().find(|item| {
-                    item.volume.id.is_some_and(|id| id == volume_id)
+                    item.volume.id == volume_id
                 });
                 if let Some(item) = pick {
                     let mut volume = item.volume.clone();
@@ -199,10 +199,10 @@ impl GalleryItem {
         &self,
         db: &Rc<Rexie>,
         notify: &Callback<Notification>,
-        delete_cb: &Callback<u32>,
-        update_cb: &Callback<(u32, String)>,
+        delete_cb: &Callback<VolumeId>,
+        update_cb: &Callback<(VolumeId, String)>,
     ) -> Html {
-        let volume_id = self.volume.id.unwrap();
+        let volume_id = self.volume.id;
         let onclick = delete_cb.reform(move |_| volume_id);
         let commit = update_cb.reform(move |new_title: String| (volume_id, new_title));
         let title = &self.volume.title;
@@ -262,7 +262,7 @@ async fn commit_volume(db: Rc<Rexie>, volume: VolumeMetadata) -> Message {
     fetch(db).await
 }
 
-async fn delete(db: Rc<Rexie>, volume_id: u32) -> Message {
+async fn delete(db: Rc<Rexie>, volume_id: VolumeId) -> Message {
     if let Err(err) = delete_volume(&db, volume_id).await {
         return Message::Notify(
             Warning("failed to delete volume from IndexedDB", err.to_string())
@@ -272,6 +272,7 @@ async fn delete(db: Rc<Rexie>, volume_id: u32) -> Message {
 }
 
 mod download {
+    use crate::models::VolumeId;
     use crate::notify::Notification;
     use crate::notify::Notification::Warning;
     use crate::utils::zip::create_ziparchive;
@@ -286,7 +287,7 @@ mod download {
     pub struct Props {
         pub db: Rc<Rexie>,
         pub notify: Callback<Notification>,
-        pub volume_id: u32,
+        pub volume_id: VolumeId,
     }
 
     pub enum Message {
@@ -366,7 +367,7 @@ mod download {
         }
     }
 
-    async fn fetch(db: Rc<Rexie>, volume_id: u32) -> Message {
+    async fn fetch(db: Rc<Rexie>, volume_id: VolumeId) -> Message {
         match create_ziparchive(db.clone(), volume_id).await {
             Ok(file) => Message::Set(file),
             Err(err) => Message::Notify(Warning("failed to create zip archive for download", err.to_string()))

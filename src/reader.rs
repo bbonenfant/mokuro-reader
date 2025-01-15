@@ -5,7 +5,7 @@ use rexie::Rexie;
 use web_sys::{Event, KeyboardEvent, MouseEvent};
 use yew::{html, Callback, Component, Context, Html, NodeRef, Properties};
 
-use crate::models::VolumeMetadata;
+use crate::models::{VolumeId, VolumeMetadata};
 use crate::notify::{Notification, Notification::Warning as Warning};
 use crate::reader::window::{Rect, WindowState};
 use crate::utils::{
@@ -25,7 +25,7 @@ pub struct Cursor {
 pub struct ReaderProps {
     pub db: Rc<Rexie>,
     pub notify: Callback<Notification>,
-    pub volume_id: u32,
+    pub volume_id: VolumeId,
 }
 
 pub enum ReaderMessage {
@@ -373,7 +373,7 @@ impl Reader {
         }
     }
 
-    async fn fetch(db: Rc<Rexie>, volume_id: u32) -> ReaderMessage {
+    async fn fetch(db: Rc<Rexie>, volume_id: VolumeId) -> ReaderMessage {
         match get_volume(&db, volume_id).await {
             Ok(volume) => { ReaderMessage::Set(volume) }
             Err(err) => ReaderMessage::Notify(
@@ -475,7 +475,7 @@ mod page {
     use web_sys::{ClipboardEvent, MouseEvent};
     use yew::{html, AttrValue, Callback, Component, Context, Event, Html, NodeRef, Properties};
 
-    use crate::models::{OcrBlock, PageImage, PageOcr};
+    use crate::models::{OcrBlock, PageImage, PageOcr, VolumeId};
     use crate::notify::Notification;
     use crate::utils::db::{get_page_and_ocr, put_ocr};
     use crate::utils::web::{focus, get_selection};
@@ -487,7 +487,7 @@ mod page {
     pub struct Props {
         pub db: Rc<Rexie>,
         pub notify: Callback<Notification>,
-        pub volume_id: u32,
+        pub volume_id: VolumeId,
         pub name: AttrValue,
         pub node_ref: NodeRef,
         pub bbox: BoundingBox,
@@ -724,7 +724,7 @@ mod page {
     }
 
     impl Page {
-        async fn fetch(db: Rc<Rexie>, id: u32, name: AttrValue) -> PageMessage {
+        async fn fetch(db: Rc<Rexie>, id: VolumeId, name: AttrValue) -> PageMessage {
             let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
             match get_page_and_ocr(&db, &key.into()).await {
                 Ok((image, ocr)) => PageMessage::Set(image, ocr),
@@ -736,7 +736,7 @@ mod page {
                 )
             }
         }
-        async fn commit_ocr(db: Rc<Rexie>, id: u32, name: AttrValue, ocr: PageOcr) -> PageMessage {
+        async fn commit_ocr(db: Rc<Rexie>, id: VolumeId, name: AttrValue, ocr: PageOcr) -> PageMessage {
             let key = js_sys::Array::of2(&id.into(), &name.as_str().into());
             if let Err(err) = put_ocr(&db, &ocr, &key).await {
                 return PageMessage::Notify(
