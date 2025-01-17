@@ -183,10 +183,14 @@ impl OcrBlock {
         Self { uuid, box_, vertical, font_size, lines: Vec::default() }
     }
 
+    pub fn validate(&self) -> bool {
+        self.box_.0 <= self.box_.2 && self.box_.1 <= self.box_.3
+    }
+
     pub fn top(&self) -> f64 { self.box_.1 as f64 }
     pub fn left(&self) -> f64 { self.box_.0 as f64 }
-    pub fn height(&self) -> f64 { (self.box_.3 - self.box_.1) as f64 }
-    pub fn width(&self) -> f64 { (self.box_.2 - self.box_.0) as f64 }
+    pub fn height(&self) -> f64 { self.box_.3.checked_sub(self.box_.1).unwrap_or(0) as f64 }
+    pub fn width(&self) -> f64 { self.box_.2.checked_sub(self.box_.0).unwrap_or(0) as f64 }
 }
 
 #[derive(Clone)]

@@ -618,6 +618,13 @@ mod page {
                     true
                 }
                 PageMessage::UpdateBlock(block) => {
+                    if !block.validate() {
+                        ctx.props().notify.emit(Notification::Warning(
+                            "Textbox not save: Invalid dimensions",
+                            "OcrBlock has invalid dimensions. Probably a bug with box_ tuple".to_string(),
+                        ));
+                        return true;
+                    }
                     if let Some(index) = self.ocr.blocks.iter().position(|b| b.uuid == block.uuid) {
                         self.ocr.blocks[index] = block;
                     };
@@ -996,7 +1003,7 @@ mod ocr {
                     } else { false }
                 }
                 Self::Message::Autosize => {
-                    let (left, right, top, bottom) = match self.get_autosize_bounds() {
+                    let (left, top, right, bottom) = match self.get_autosize_bounds() {
                         Ok(bounds) => bounds,
                         Err(err) => {
                             Self::notify(ctx, "failed to Autosize OCR element", err);
