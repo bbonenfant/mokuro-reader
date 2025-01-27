@@ -299,7 +299,7 @@ h2, p {
         padding: 10px;
 
         display: flex;
-        flex-flow: nowrap;
+        flex-direction: row-reverse;
         align-items: center;
         justify-content: center;
 
@@ -328,7 +328,7 @@ h2, p {
             }
         }
 
-        .pagebar:first-of-type {
+        .pagebar:last-of-type {
             transform: scale(-1, 1);
         }
 

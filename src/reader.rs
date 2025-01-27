@@ -256,7 +256,7 @@ impl Component for Reader {
     fn view(&self, ctx: &Context<Self>) -> Html {
         if let Some(volume) = &self.volume {
             let ReaderProps { db, notify, volume_id, .. } = ctx.props();
-            let (page_right, page_left) = volume.select_pages();
+            let (first_page, second_page) = volume.select_pages();
             let magnifier = if self.cursor.magnify {
                 volume.magnifier.render(&self.cursor.position, &self.node_left, &self.node_right)
             } else { Html::default() };
@@ -295,20 +295,7 @@ impl Component for Reader {
 
                 {magnifier}
 
-                if let Some(name) = page_left {
-                    <page::Page
-                        {db}
-                        {notify}
-                        {volume_id}
-                        {name}
-                        node_ref={&self.node_left}
-                        bbox={self.window.left}
-                        mutable={self.mutable}
-                        onload={&self.handle_image_load}
-                        focus_reader={&self.focus}
-                    />
-                }
-                if let Some(name) = page_right {
+                if let Some(name) = first_page {
                     <page::Page
                         {db}
                         {notify}
@@ -316,6 +303,19 @@ impl Component for Reader {
                         {name}
                         node_ref={&self.node_right}
                         bbox={self.window.right}
+                        mutable={self.mutable}
+                        onload={&self.handle_image_load}
+                        focus_reader={&self.focus}
+                    />
+                }
+                if let Some(name) = second_page {
+                    <page::Page
+                        {db}
+                        {notify}
+                        {volume_id}
+                        {name}
+                        node_ref={&self.node_left}
+                        bbox={self.window.left}
                         mutable={self.mutable}
                         onload={&self.handle_image_load}
                         focus_reader={&self.focus}
