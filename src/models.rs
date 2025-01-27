@@ -54,30 +54,21 @@ mod magnifier {
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+    #[serde(default)]
     pub struct MagnifierSettings {
-        #[serde(default = "default_zoom")]
         pub zoom: u16,
-        #[serde(default = "default_radius")]
         pub radius: u8,
-        #[serde(default = "default_size")]
         pub height: u16,
-        #[serde(default = "default_size")]
         pub width: u16,
     }
-
-    fn default_zoom() -> u16 { 200 }
-
-    fn default_radius() -> u8 { 35 }
-
-    fn default_size() -> u16 { 350 }
 
     impl Default for MagnifierSettings {
         fn default() -> Self {
             Self {
-                zoom: default_zoom(),
-                radius: default_radius(),
-                height: default_size(),
-                width: default_size(),
+                zoom: 200,
+                radius: 35,
+                height: 350,
+                width: 350,
             }
         }
     }
@@ -86,17 +77,23 @@ mod magnifier {
 mod reader_state {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+    #[serde(default)]
     pub struct ReaderState {
-        #[serde(default)]
         pub single_page: bool,
-        #[serde(default)]
         pub current_page: usize,
-        #[serde(default = "default_first_page_is_cover")]
         pub first_page_is_cover: bool,
     }
 
-    fn default_first_page_is_cover() -> bool { true }
+    impl Default for ReaderState {
+        fn default() -> Self {
+            Self {
+                single_page: false,
+                current_page: 0,
+                first_page_is_cover: true,
+            }
+        }
+    }
 }
 
 
