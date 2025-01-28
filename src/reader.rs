@@ -856,6 +856,7 @@ mod ocr {
                 ctx.link().callback(|_: FocusEvent| Self::Message::CommitLines);
             let handle_escape = ctx.link().batch_callback(|e: KeyboardEvent| {
                 if e.code().as_str() == "Escape" {
+                    e.prevent_default();
                     vec![Self::Message::SetContentEditing(false), Self::Message::CommitLines]
                 } else { vec![] }
             });
