@@ -1026,29 +1026,30 @@ mod ocr {
                     true
                 }
                 Self::Message::Move(direction) => {
-                    let Props { block, commit_block, .. } = ctx.props();
+                    let Props { block, commit_block, scale, .. } = ctx.props();
                     let mut box_ = block.box_.clone();
                     // box_ = (left as u32, top as u32, right as u32, bottom as u32)
+                    let delta = (scale.round() as u32).max(1);
                     match direction {
                         Direction::Up => {
-                            if let Some(top) = box_.1.checked_sub(1) {
+                            if let Some(top) = box_.1.checked_sub(delta) {
                                 box_.1 = top;
-                                box_.3 -= 1;
+                                box_.3 -= delta;
                             }
                         }
                         Direction::Down => {
-                            box_.1 += 1;
-                            box_.3 += 1;
+                            box_.1 += delta;
+                            box_.3 += delta;
                         }
                         Direction::Left => {
-                            if let Some(left) = box_.0.checked_sub(1) {
+                            if let Some(left) = box_.0.checked_sub(delta) {
                                 box_.0 = left;
-                                box_.2 -= 1;
+                                box_.2 -= delta;
                             }
                         }
                         Direction::Right => {
-                            box_.0 += 1;
-                            box_.2 += 1;
+                            box_.0 += delta;
+                            box_.2 += delta;
                         }
                     }
 
