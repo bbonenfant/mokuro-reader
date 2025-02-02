@@ -64,7 +64,7 @@ impl Component for App {
                 let db = db.clone();
                 let scope = scope.clone();
                 let render = Callback::from(move |route| {
-                    let notify = scope.callback(|msg| notify::Message::Notify(msg));
+                    let notify = scope.callback(notify::Message::Notify);
                     switch(&db, route, notify)
                 });
                 html! {

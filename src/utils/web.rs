@@ -14,7 +14,7 @@ pub fn document() -> web_sys::Document {
 
 #[inline(always)]
 pub fn query_selector(selector: &'static str) -> web_sys::Element {
-    const EXPECT: &'static str = "Failed to query document for selector";
+    const EXPECT: &str = "Failed to query document for selector";
     document().query_selector(selector).expect_throw(EXPECT).expect_throw(EXPECT)
 }
 
@@ -57,7 +57,7 @@ pub fn set_caret(node: &yew::NodeRef) {
     let element = node.cast::<web_sys::HtmlElement>();
     let range = document().create_range();
     if let (Some(element), Ok(range)) = (element, range) {
-        element.child_nodes().get(0).map(|child| {
+        if let Some(child) = element.child_nodes().get(0) {
             let _ = range.set_start(&child, 0);
             range.collapse_with_to_start(true);
 
@@ -65,7 +65,7 @@ pub fn set_caret(node: &yew::NodeRef) {
                 let _ = selection.remove_all_ranges();
                 let _ = selection.add_range(&range);
             }
-        });
+        };
     }
 }
 
@@ -88,8 +88,7 @@ pub fn is_focused(node: &yew::NodeRef) -> bool {
 }
 
 pub fn get_input_bool(node: &yew::NodeRef) -> Option<bool> {
-    node.cast::<web_sys::HtmlInputElement>()
-        .and_then(|elm| Some(elm.checked()))
+    node.cast::<web_sys::HtmlInputElement>().map(|elm| elm.checked())
 }
 
 pub fn get_input_f64(node: &yew::NodeRef) -> Option<f64> {

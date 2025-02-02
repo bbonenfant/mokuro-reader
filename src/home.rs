@@ -68,8 +68,8 @@ impl Component for Home {
         let hide_modal = ctx.link().callback(|_| Message::HideModal);
         let show_modal = ctx.link().callback(|_| Message::ShowModal);
         let toggle_settings = ctx.link().callback(|_| Message::ToggleSettingsBar);
-        let delete_volume = ctx.link().callback(|id| Message::Delete(id));
-        let commit_settings = ctx.link().callback(|s| Message::CommitSettings(s));
+        let delete_volume = ctx.link().callback(Message::Delete);
+        let commit_settings = ctx.link().callback(Message::CommitSettings);
         let update_volume = ctx.link().callback(|(id, title)| Message::UpdateVolume(id, title));
         Self {
             help: false,
@@ -109,7 +109,7 @@ impl Component for Home {
                 false
             }
             Message::Delete(volume_id) => {
-                if gloo_dialogs::confirm(&DELETE_PROMPT) {
+                if gloo_dialogs::confirm(DELETE_PROMPT) {
                     ctx.link().send_future(enclose!((db) delete(db, volume_id)));
                 }
                 false
@@ -641,7 +641,7 @@ mod title {
 
         fn view(&self, ctx: &Context<Self>) -> Html {
             let Props { title, .. } = ctx.props();
-            let contenteditable = self.editing.then(|| "true");
+            let contenteditable = self.editing.then_some("true");
             let onblur = &self.onblur;
             let ondblclick = &self.ondblclick;
             let onkeypress = &self.onkeypress;

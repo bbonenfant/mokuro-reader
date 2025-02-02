@@ -63,12 +63,12 @@ impl Component for NotificationProvider {
                 true
             }
             Message::CancelTimer(id) => {
-                self.timeouts.remove(&id).map(drop);
+                if let Some(a) = self.timeouts.remove(&id) { drop(a) }
                 true
             }
             Message::Delete(id) => {
                 self.notifications.remove(&id);
-                self.timeouts.remove(&id).map(drop);
+                if let Some(a) = self.timeouts.remove(&id) { drop(a) }
                 true
             }
         }

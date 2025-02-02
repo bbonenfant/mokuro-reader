@@ -29,7 +29,7 @@ pub struct ReaderProps {
 }
 
 pub enum ReaderMessage {
-    Set(VolumeMetadata),
+    Set(Box<VolumeMetadata>),
     Notify(Notification),
     Commit(sidebar::SidebarData),
     Focus,
@@ -79,8 +79,7 @@ impl Component for Reader {
             )
         };
 
-        let commit_sidebar_data =
-            ctx.link().callback(|data| Self::Message::Commit(data));
+        let commit_sidebar_data = ctx.link().callback(Self::Message::Commit);
         let focus = ctx.link().callback(|()| Self::Message::Focus);
         let handle_keypress = ctx.link().batch_callback(
             |e: KeyboardEvent| {
@@ -154,7 +153,7 @@ impl Component for Reader {
         let ReaderProps { db, .. } = ctx.props();
         match msg {
             ReaderMessage::Set(volume) => {
-                let previous = self.volume.replace(volume);
+                let previous = self.volume.replace(*volume);
                 previous != self.volume
             }
             ReaderMessage::Notify(notification) => {
@@ -282,7 +281,7 @@ impl Component for Reader {
                 <div
                   ref={&self.node}
                   id="Reader"
-                  class={self.mutable.then(||Some("editable"))}
+                  class={self.mutable.then_some("editable")}
                   style={format!("line-height: {:.1}", volume.line_height)}
                   tabindex="-1"
                   oncontextmenu={&self.handle_right_click}
@@ -366,7 +365,7 @@ impl Reader {
     async fn commit_volume(db: Rc<Rexie>, volume: VolumeMetadata) -> ReaderMessage {
         // gloo_console::log!(format!("updating volume ({id} - {})", volume.title));
         match put_volume(&db, &volume).await {
-            Ok(_) => ReaderMessage::Set(volume),
+            Ok(_) => ReaderMessage::Set(Box::new(volume)),
             Err(err) => ReaderMessage::Notify(
                 Warning("failed to save volume to IndexedDB", err.to_string())
             )
@@ -375,7 +374,7 @@ impl Reader {
 
     async fn fetch(db: Rc<Rexie>, volume_id: VolumeId) -> ReaderMessage {
         match get_volume(&db, volume_id).await {
-            Ok(volume) => { ReaderMessage::Set(volume) }
+            Ok(volume) => { ReaderMessage::Set(Box::new(volume)) }
             Err(err) => ReaderMessage::Notify(
                 Warning("failed to retrieve from IndexedDB", err.to_string())
             )
@@ -552,8 +551,7 @@ mod page {
                     }
                 };
             });
-            let report_blur =
-                ctx.link().callback(|node| Self::Message::ReportBlur(node));
+            let report_blur = ctx.link().callback(Self::Message::ReportBlur);
             Self {
                 _url_object: None,
                 drag: None,
@@ -691,7 +689,7 @@ mod page {
             let onmouseup = if *mutable { &self.end_drag } else { &noop };
             let onmousemove = if dragging { &self.onmousemove } else { &noop };
             let onmouseout = if dragging { &self.end_drag } else { &noop };
-            let notify = ctx.link().callback(|n| PageMessage::Notify(n));
+            let notify = ctx.link().callback(PageMessage::Notify);
 
             let new_block = if let Some(drag) = &self.drag.filter(|d| d.dirty()) {
                 let style = format!(
@@ -1027,7 +1025,7 @@ mod ocr {
                 }
                 Self::Message::Move(direction) => {
                     let Props { block, commit_block, scale, .. } = ctx.props();
-                    let mut box_ = block.box_.clone();
+                    let mut box_ = block.box_;
                     // box_ = (left as u32, top as u32, right as u32, bottom as u32)
                     let delta = (scale.round() as u32).max(1);
                     match direction {
@@ -1073,7 +1071,7 @@ mod ocr {
                     // Grab the lines from only the <p> nodes. This may be overly restrictive.
                     // TODO: Check how browsers handle newlines in contenteditable nodes.
                     let mut lines: Vec<AttrValue> = (0..children.length())
-                        .map(|idx| children.item(idx)).flatten()
+                        .filter_map(|idx| children.item(idx))
                         .filter(|elm| elm.tag_name() == "P")
                         .filter_map(|elm| elm.text_content().map(|t| t.into()))
                         .collect();
@@ -1171,7 +1169,7 @@ mod ocr {
                   ref={&self.node_ref}
                   key={format!("{}-{}", block.uuid.as_str(), self.stamp)}
                   class={"ocr-block"}
-                  contenteditable={self.contenteditable.then(|| "true")}
+                  contenteditable={self.contenteditable.then_some("true")}
                   {style} tabindex={"0"}
                   {onblur} {oncopy} {ondblclick}
                   {onkeydown} {onkeypress} {onmouseup} {onmousedown} {onmousemove}
@@ -1586,8 +1584,8 @@ mod window {
     impl WindowState {
         pub fn new(left: Rect, right: Rect) -> Self {
             let screen = Screen::default();
-            let left = BoundingBox { rect: left, screen: screen.clone() };
-            let right = BoundingBox { rect: right, screen: screen.clone() };
+            let left = BoundingBox { rect: left, screen };
+            let right = BoundingBox { rect: right, screen };
             Self { screen, left, right }
         }
     }

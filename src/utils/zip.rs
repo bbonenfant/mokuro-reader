@@ -112,7 +112,7 @@ fn read_zipfile<R: Read + Seek>(
 
     // copy the contents of the ZipFile into a Vec<u8>
     let mut buffer = Vec::with_capacity(file.size() as usize);
-    std::io::copy(&mut file, &mut buffer).map_err(|err| ZipError::Io(err))?;
+    std::io::copy(&mut file, &mut buffer).map_err(ZipError::Io)?;
     Ok(buffer)
 }
 
