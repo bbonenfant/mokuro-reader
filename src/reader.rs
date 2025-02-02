@@ -290,7 +290,7 @@ impl Component for Reader {
                 >
                 {pagebar(
                     self.window.right.rect.height as u32,
-                    ctx.link().callback(|_| Self::Message::NextPage),
+                    ctx.link().callback(|_| Self::Message::PrevPage),
                 )}
 
                 {magnifier}
@@ -324,7 +324,7 @@ impl Component for Reader {
 
                 {pagebar(
                     self.window.right.rect.height as u32,
-                    ctx.link().callback(|_| Self::Message::PrevPage),
+                    ctx.link().callback(|_| Self::Message::NextPage),
                 )}
 
                 </div>
