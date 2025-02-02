@@ -853,7 +853,9 @@ mod ocr {
             let begin_drag =
                 ctx.link().callback(|e: MouseEvent| Self::Message::BeginDrag(e.x(), e.y()));
             let commit_lines =
-                ctx.link().callback(|_: FocusEvent| Self::Message::CommitLines);
+                ctx.link().batch_callback(|_: FocusEvent|
+                    vec![Self::Message::CommitLines, Self::Message::RemoveFocus]
+                );
             let handle_escape = ctx.link().batch_callback(|e: KeyboardEvent| {
                 if e.code().as_str() == "Escape" {
                     e.prevent_default();
@@ -1090,7 +1092,6 @@ mod ocr {
                         block.lines = lines;
                         ctx.props().commit_block.emit(block);
                     }
-                    ctx.link().send_message(TextBlockMessage::RemoveFocus);
                     false
                 }
                 Self::Message::DeleteBlock => {

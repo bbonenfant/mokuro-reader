@@ -371,13 +371,15 @@ h2, p {
                 white-space: nowrap;
             }
 
-            &:hover > p, &:focus > p {
+            &:hover > p {
                 opacity: 1
             }
         }
 
         &.editable .ocr-block {
-            /*background-color: lightgray;*/
+            &:focus > p {
+                opacity: 1
+            }
 
             &[contenteditable="true"] {
                 outline: 2px solid red;
