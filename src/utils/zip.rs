@@ -26,8 +26,8 @@ pub async fn extract_ziparchive(
             serde_json::from_slice::<VolumeMetadata>(&data)?
         };
         volume.id = 0;  // ensure id is not specified. IndexDB determines this.
-        volume.id = put_volume(db, &volume).await?;
         volume.magnifier = global_settings.magnifier;
+        volume.id = put_volume(db, &volume).await?;
         volume
     };
 
