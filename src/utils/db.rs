@@ -132,7 +132,7 @@ pub async fn put_volume(db: &Rc<Rexie>, volume: &VolumeMetadata) -> Result<Volum
     let txn = db.transaction(&[V], TransactionMode::ReadWrite)?;
     let volume_id = txn.store(V)?.put(&config, None).await?;
     txn.done().await?;
-    Ok(volume_id.as_f64().unwrap() as VolumeId)
+    Ok(volume_id.unchecked_into_f64() as VolumeId)
 }
 
 /// delete_volume cascade deletes the volume with matching volume_id,
