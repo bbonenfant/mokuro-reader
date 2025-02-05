@@ -6,55 +6,77 @@ use rexie::Rexie;
 use zip::{read::ZipArchive, result::ZipError, write::{SimpleFileOptions, ZipWriter}};
 
 use crate::models::{PageImage, PageOcr, VolumeId, VolumeMetadata};
-use crate::utils::db::{get_page_and_ocr, get_settings, get_volume, put_volume, start_bulk_write_txn};
+use crate::utils::db::{get_page_and_ocr, get_settings, get_volume, start_bulk_write_txn};
 
 const METADATA_FILE: &str = "mokuro-metadata.json";
 
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen(module = "/src/utils/archive.js")]
+extern "C" {
+    type Archive;
+
+    #[wasm_bindgen(constructor)]
+    fn new() -> Archive;
+
+    #[wasm_bindgen(method)]
+    async fn load(this: &Archive, file: web_sys::File);
+
+    #[wasm_bindgen(catch, method)]
+    async fn file(this: &Archive, name: &str) -> Result<JsValue, JsValue>;
+}
+
 /// extract a zip archive in memory and inserts the data into the mokuro IndexedDB.
 pub async fn extract_ziparchive(
-    db: &Rc<Rexie>, file_obj: gloo_file::File,
+    db: &Rc<Rexie>, file: web_sys::File,
 ) -> crate::Result<(VolumeMetadata, gloo_file::ObjectUrl)> {
     let global_settings = get_settings(db).await?;
-    let mut archive = {
-        let reader = Cursor::new(gloo_file_read(&file_obj).await?);
-        ZipArchive::new(reader)?
-    };
+    let archive = Archive::new();
+    archive.load(file).await;
 
-    let volume = {
+    let mut volume = {
         let mut volume = {
-            let data = read_zipfile(&mut archive, METADATA_FILE)?;
+            let data = js_to_u8_vec(archive.file(METADATA_FILE).await?);
             serde_json::from_slice::<VolumeMetadata>(&data)?
         };
         volume.id = 0;  // ensure id is not specified. IndexDB determines this.
         volume.magnifier = global_settings.magnifier;
-        volume.id = put_volume(db, &volume).await?;
         volume
     };
 
     let cover = volume.cover();
     let cover_object_url = {
-        let cover_data = read_zipfile(&mut archive, cover)?;
+        let cover_data = js_to_u8_vec(archive.file(cover).await?);
         PageImage::new(cover, &cover_data[..]).into()
     };
 
-    let id = volume.id.into();
-    let (txn, pages_store, ocr_store) = start_bulk_write_txn(db)?;
+    let mut page_ocr_data = Vec::with_capacity(volume.pages.len());
     for (page_name, ocr_name) in volume.pages.iter() {
-        let key = js_sys::Array::of2(&id, &page_name.as_str().into());
         let image_data = {
-            let image_data = read_zipfile(&mut archive, page_name)?;
+            let image_data = js_to_u8_vec(archive.file(page_name).await?);
             PageImage::new(page_name, &image_data[..])
         };
-        pages_store.add(image_data.as_ref(), Some(&key)).await?;
 
         let page_ocr = {
-            let ocr_data = read_zipfile(&mut archive, ocr_name)?;
-            let ocr = serde_json::from_slice::<PageOcr>(&ocr_data)?;
-            serde_wasm_bindgen::to_value(&ocr)?
+            let data = js_to_u8_vec(archive.file(ocr_name).await?);
+            serde_json::from_slice::<PageOcr>(&data)?
         };
-        ocr_store.add(&page_ocr, Some(&key)).await?;
+        page_ocr_data.push((page_name, image_data, page_ocr));
     }
 
+    let (txn, volumes_store, pages_store, ocr_store) = start_bulk_write_txn(db)?;
+    volume.id = {
+        let config = serde_wasm_bindgen::to_value(&volume)?;
+        let key = volumes_store.put(&config, None).await?;
+        key.unchecked_into_f64() as VolumeId
+    };
+    let id = volume.id.into();
+    for (name, image, ocr) in page_ocr_data {
+        let key = js_sys::Array::of2(&id, &name.as_str().into());
+        pages_store.add(image.as_ref(), Some(&key)).await?;
+        let ocr_data = serde_wasm_bindgen::to_value(&ocr)?;
+        ocr_store.add(&ocr_data, Some(&key)).await?;
+    }
     txn.commit().await?;
     Ok((volume, cover_object_url))
 }
@@ -128,6 +150,12 @@ fn write_zipfile<W: Write + Seek>(
         bytes_written += writer.write(&content[bytes_written..])?;
     }
     Ok(bytes_written)
+}
+
+
+#[inline(always)]
+fn js_to_u8_vec(data: JsValue) -> Vec<u8> {
+    js_sys::Uint8Array::new(&data).to_vec()
 }
 
 // pub fn get_zipfile<'z, R: Read + Seek>(

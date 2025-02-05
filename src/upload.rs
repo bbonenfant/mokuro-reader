@@ -26,7 +26,7 @@ pub struct Props {
 
 pub enum Message {
     Prompt,
-    Process(Vec<gloo_file::File>),
+    Process(FileList),
     Set(Vec<Result<Preview, ExtractionError>>),
     StoragePersisted(bool),
     Notify(Notification),
@@ -66,18 +66,19 @@ impl Component for UploadModal {
         let prompt = ctx.link().callback(|_| Message::Prompt);
         let cancel_click = Callback::from(|e: MouseEvent| e.stop_propagation());
         let cancel_drag = Callback::from(|e: DragEvent| e.prevent_default());
-        let onchange = ctx.link().callback(|e: Event| {
+        let onchange = ctx.link().batch_callback(|e: Event| {
             let input: HtmlInputElement = e.target_unchecked_into();
-            Message::Process(input.files().map_or(vec![], upload_files))
+            input.files().map(|files| Message::Process(files))
         });
         let ondrop = ctx.link().callback(|e: DragEvent| {
             e.prevent_default();
             if let Some(data) = e.data_transfer() {
-                Message::Process(data.files().map_or(vec![], upload_files))
-            } else {
-                let content = "Failed to extract data transfer - drag and drop functionality may be broken";
-                Message::Notify(Warning(content, content.to_string()))
+                if let Some(files) = data.files() {
+                    return Message::Process(files);
+                }
             }
+            let content = "Failed to extract data transfer - drag and drop functionality may be broken";
+            Message::Notify(Warning(content, content.to_string()))
         });
         Self {
             previews: vec![],
@@ -147,12 +148,15 @@ impl Component for UploadModal {
                                 </Link<Route>>
                             }
                         }
-                        Err(err) => html! {
-                            <div class="preview-item">
-                                <p>{"ERROR"}</p>
-                                <p>{"failed to load file"}</p>
-                                <p>{&err.filename}</p>
-                            </div>
+                        Err(err) => {
+                            gloo_console::error!(err.error.to_string());
+                            html! {
+                                <div class="preview-item">
+                                    <p>{"ERROR"}</p>
+                                    <p>{"failed to load file"}</p>
+                                    <p>{&err.filename}</p>
+                                </div>
+                            }
                         }
                     }
                 }).collect();
@@ -209,16 +213,18 @@ async fn persist_storage() -> Message {
     }
 }
 
-async fn process(db: Rc<Rexie>, files: Vec<gloo_file::File>) -> Message {
-    let mut previews = Vec::with_capacity(files.len());
-    for file in files.into_iter() {
-        let filename = file.name();
-        previews.push(
-            extract_ziparchive(&db, file).await.map(|(volume, cover)| {
-                let url = AttrValue::from(cover.to_string());
-                Preview { _object_url: cover, url, volume }
-            }).map_err(|error| ExtractionError { error, filename })
-        )
+async fn process(db: Rc<Rexie>, files: FileList) -> Message {
+    let mut previews = Vec::with_capacity(files.length() as usize);
+    for idx in 0..files.length() {
+        if let Some(file) = files.item(idx) {
+            let filename = file.name();
+            previews.push(
+                extract_ziparchive(&db, file).await.map(|(volume, cover)| {
+                    let url = AttrValue::from(cover.to_string());
+                    Preview { _object_url: cover, url, volume }
+                }).map_err(|error| ExtractionError { error, filename })
+            )
+        }
     }
     Message::Set(previews)
 }

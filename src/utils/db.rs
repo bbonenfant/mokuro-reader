@@ -61,11 +61,12 @@ pub async fn put_settings(db: &Rc<Rexie>, settings: &Settings) -> Result<()> {
 
 /// Start a transaction with the `pages` and `ocr` stores for bulk insertion.
 /// This method is just to keep all string references to the stores in this file.
-pub fn start_bulk_write_txn(db: &Rc<Rexie>) -> Result<(Transaction, Store, Store)> {
-    let txn = db.transaction(&[P, O], TransactionMode::ReadWrite)?;
+pub fn start_bulk_write_txn(db: &Rc<Rexie>) -> Result<(Transaction, Store, Store, Store)> {
+    let txn = db.transaction(&[V, P, O], TransactionMode::ReadWrite)?;
+    let volume = txn.store(V)?;
     let pages = txn.store(P)?;
     let ocr = txn.store(O)?;
-    Ok((txn, pages, ocr))
+    Ok((txn, volume, pages, ocr))
 }
 
 #[allow(dead_code)]
