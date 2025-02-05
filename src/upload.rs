@@ -228,9 +228,3 @@ async fn process(db: Rc<Rexie>, files: FileList) -> Message {
     }
     Message::Set(previews)
 }
-
-fn upload_files(files: FileList) -> Vec<gloo_file::File> {
-    (0..files.length())
-        .filter_map(|idx| files.item(idx))
-        .map(gloo_file::File::from).collect()
-}

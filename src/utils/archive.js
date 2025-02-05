@@ -4,14 +4,33 @@ import "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
 
 export class Archive {
     constructor() {
-        this.zip = undefined;
+        this.zip = new JSZip();
     }
 
     async load(file) {
-        this.zip = await JSZip.loadAsync(file);
+        await this.zip.loadAsync(file);
     }
 
-    async file(name) {
+    async generate() {
+        const options = {type: "uint8array"}
+        return await this.zip.generateAsync(options);
+    }
+
+    async get(name) {
         return this.zip.file(name).async("uint8array");
+    }
+
+    async set(name, data) {
+        const options = {
+            binary: true,
+            compression: "DEFLATE",
+            compressionOptions: {level: 9},
+            createFolders: false
+        }
+        this.zip.file(name, data, options)
+    }
+
+    add_directory(name) {
+        this.zip.folder(name);
     }
 }

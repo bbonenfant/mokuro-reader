@@ -8,7 +8,6 @@ pub enum AppError {
     RexieError(rexie::Error),
     SerdeJsonError(serde_json::Error),
     SerdeWasmError(serde_wasm_bindgen::Error),
-    ZipError(zip::result::ZipError),
     JsValueError(wasm_bindgen::JsValue),
 }
 
@@ -26,7 +25,6 @@ impl std::fmt::Display for AppError {
             AppError::RexieError(e) => write!(f, "Rexie error: {}", e),
             AppError::SerdeJsonError(e) => write!(f, "Serde json error: {}", e),
             AppError::SerdeWasmError(e) => write!(f, "Serde-Wasm error: {}", e),
-            AppError::ZipError(e) => write!(f, "Zip error: {}", e),
             AppError::JsValueError(e) => write!(f, "JsValue error: {:?}", e),
         }
     }
@@ -55,12 +53,6 @@ impl From<serde_json::Error> for AppError {
 
 impl From<serde_wasm_bindgen::Error> for AppError {
     fn from(error: serde_wasm_bindgen::Error) -> Self { AppError::SerdeWasmError(error) }
-}
-
-impl From<zip::result::ZipError> for AppError {
-    fn from(error: zip::result::ZipError) -> Self {
-        AppError::ZipError(error)
-    }
 }
 
 impl From<wasm_bindgen::JsValue> for AppError {
