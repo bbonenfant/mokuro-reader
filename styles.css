@@ -524,3 +524,23 @@ h2, p {
         }
     }
 }
+
+
+/* Site is not intended for mobile devices. */
+#MobileIncompatibility {
+    visibility: hidden;
+    margin-block: 25%;
+    text-align: center;
+}
+
+@media only screen and (max-width: 720px) {
+
+    #App, #NotificationContainer {
+        height: 0;
+        visibility: hidden;
+    }
+
+    #MobileIncompatibility {
+        visibility: visible;
+    }
+}
